@@ -57,7 +57,7 @@ fn send_request(socket: &PathBuf, header: &str, lines: &[&str]) -> Vec<String> {
 
 fn start_daemon_in(dir: &std::path::Path) -> std::process::Child {
     let child = Command::new(exe_path())
-        .args(["start"])
+        .args(["start-foreground"])
         .env("XDG_RUNTIME_DIR", dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null())

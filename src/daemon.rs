@@ -1,5 +1,4 @@
 use anyhow::{Context, Result, bail};
-use askama::Template;
 use rayon::ThreadPoolBuilder;
 use std::{
     fs::{self, Permissions},
@@ -29,14 +28,7 @@ enum Role {
     Daemon,
 }
 
-#[derive(Template)]
-#[template(path = "zsh-integration.txt")]
-#[allow(dead_code)]
-struct ActivateTemplate {
-    exe_path: String,
-    runtime_dir: String,
-    version: &'static str,
-}
+const ACTIVATE_SCRIPT: &str = include_str!("../templates/zsh-integration.zsh");
 
 fn pid_path(runtime_dir: &Path) -> PathBuf {
     runtime_dir.join("daemon.pid")
@@ -54,7 +46,6 @@ fn pid_alive(pid: u32) -> bool {
     // SAFETY: kill(pid, 0) only checks if process exists, no signal is sent.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
-
 
 fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Result<()> {
     let mut reader = BufReader::new(&stream);
@@ -75,9 +66,7 @@ fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Re
                 "ver" => client_version = Some(value),
                 "lang" => lang = value,
                 "lines" => {
-                    lines_count = value
-                        .parse()
-                        .context("unable to parse lines count")?;
+                    lines_count = value.parse().context("unable to parse lines count")?;
                 }
                 _ => {}
             }
@@ -122,17 +111,15 @@ pub fn activate(runtime_dir: &Path) -> Result<()> {
     let (role, _already_running) = start_daemon_internal(runtime_dir, false)?;
     if role == Role::Parent {
         let exe = std::env::current_exe()?;
-        let template = ActivateTemplate {
-            exe_path: exe.to_str().unwrap().to_string(),
-            runtime_dir: runtime_dir
-                .to_str()
-                .unwrap()
-                .trim_end_matches('/')
-                .to_string(),
-            version: PROTOCOL_VERSION,
-        };
+        let runtime_dir_str = runtime_dir
+            .to_str()
+            .unwrap()
+            .trim_end_matches('/');
         let mut s = stdout().lock();
-        s.write_all(template.render().unwrap().as_bytes())?;
+        writeln!(s, "export _ZSH_TS_HIGHLIGHTER_PATH={:?}", exe.to_str().unwrap())?;
+        writeln!(s, "export _ZSH_TS_HIGHLIGHTER_RUNTIME_DIR={:?}", runtime_dir_str)?;
+        writeln!(s, "export _ZSH_TS_HIGHLIGHTER_VERSION={:?}", PROTOCOL_VERSION)?;
+        s.write_all(ACTIVATE_SCRIPT.as_bytes())?;
         s.flush()?;
     }
     Ok(())
@@ -140,6 +127,11 @@ pub fn activate(runtime_dir: &Path) -> Result<()> {
 
 pub fn start_daemon(runtime_dir: &Path) -> Result<()> {
     start_daemon_internal(runtime_dir, false)?;
+    Ok(())
+}
+
+pub fn start_daemon_foreground(runtime_dir: &Path) -> Result<()> {
+    start_daemon_internal(runtime_dir, true)?;
     Ok(())
 }
 

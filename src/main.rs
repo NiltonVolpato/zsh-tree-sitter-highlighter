@@ -4,7 +4,7 @@ mod dynamic;
 mod daemon;
 
 use anyhow::{Context, Result, bail};
-use daemon::{activate, start_daemon, stop_daemon, status_daemon, restart_daemon, highlight_one_shot};
+use daemon::{activate, start_daemon, start_daemon_foreground, stop_daemon, status_daemon, restart_daemon, highlight_one_shot};
 use highlight::LanguageConfig;
 use std::io::Read;
 use std::path::PathBuf;
@@ -22,7 +22,7 @@ fn runtime_dir() -> Result<PathBuf> {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        bail!("Usage: {} <activate|start|stop|restart|status|highlight> [args...]", args[0]);
+        bail!("Usage: {} <activate|start|start-foreground|stop|restart|status|highlight> [args...]", args[0]);
     }
 
     match args[1].as_str() {
@@ -34,6 +34,10 @@ fn main() -> Result<()> {
             let dir = runtime_dir()?;
             start_daemon(&dir)?;
             println!("Daemon started.");
+        }
+        "start-foreground" => {
+            let dir = runtime_dir()?;
+            start_daemon_foreground(&dir)?;
         }
         "stop" => {
             let dir = runtime_dir()?;
