@@ -30,6 +30,7 @@ _zsh_ts_highlighter() {
 
     local socket_path="$_ZSH_TS_HIGHLIGHTER_RUNTIME_DIR/daemon.sock"
     if [[ ! -S "$socket_path" ]]; then
+        zle -M "zsh-tree-sitter-highlighter: daemon socket not found at $socket_path"
         return
     fi
 
@@ -47,6 +48,12 @@ _zsh_ts_highlighter() {
 
     local lang="${FORGE_PROMPT_LANG:-zsh}"
 
+    if [[ -z "$_ZSH_TS_HIGHLIGHTER_VERSION" ]]; then
+        zle -M "zsh-tree-sitter-highlighter: _ZSH_TS_HIGHLIGHTER_VERSION not set, activation may have failed"
+        exec {fd}>&-
+        return
+    fi
+
     {
         local header="ver=$_ZSH_TS_HIGHLIGHTER_VERSION lang=$lang lines=$lines_count"
         print -r -- "$header"
@@ -55,6 +62,7 @@ _zsh_ts_highlighter() {
         fi
     } >&$fd || {
         exec {fd}>&-
+        zle -M "zsh-tree-sitter-highlighter: failed to send request to daemon"
         return
     }
 
@@ -67,6 +75,10 @@ _zsh_ts_highlighter() {
 
     region_highlight=("${new_regions[@]}")
     exec {fd}>&-
+
+    if [[ -z "${new_regions[@]}" ]]; then
+        zle -M "zsh-tree-sitter-highlighter: daemon returned no highlights (version mismatch?)"
+    fi
 }
 
 if ! zmodload zsh/net/socket 2>/dev/null; then

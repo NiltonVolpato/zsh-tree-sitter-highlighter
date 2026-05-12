@@ -224,3 +224,55 @@ expect eof
         "expected ANSI color escapes in output (highlighting not working)\nstdout: {stdout}\nstderr: {stderr}"
     );
 }
+
+/// Verify that an error message is shown when the daemon is not running.
+/// Sources the integration script directly (skipping `activate` which would start a daemon).
+#[test]
+fn test_error_message_when_daemon_down() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = exe_path();
+    let runtime_dir_str = dir.path().to_str().unwrap();
+    let template_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("templates/zsh-integration.zsh");
+
+    let expect_script = format!(
+        r#"
+set timeout 5
+spawn zsh -f
+expect "% "
+send "export _ZSH_TS_HIGHLIGHTER_PATH={exe}\r"
+expect "% "
+send "export _ZSH_TS_HIGHLIGHTER_RUNTIME_DIR={runtime_dir_str}\r"
+expect "% "
+send "export _ZSH_TS_HIGHLIGHTER_VERSION=1\r"
+expect "% "
+send "source {template}\r"
+expect "% "
+send "echo -n foo\r"
+expect "% "
+send "exit\r"
+expect eof
+"#,
+        exe = exe.to_str().unwrap(),
+        runtime_dir_str = runtime_dir_str,
+        template = template_path.to_str().unwrap(),
+    );
+
+    let result = Command::new("expect")
+        .arg("-c")
+        .arg(&expect_script)
+        .output()
+        .expect("failed to run expect");
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+
+    assert!(
+        result.status.success(),
+        "expect failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("daemon socket not found"),
+        "expected 'daemon socket not found' error message in output\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
