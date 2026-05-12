@@ -4,3 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1"
+askama = "0.16"
+libc = "0.2"
+rayon = "1"
+tree-sitter = "0.26.8"
+tree-sitter-highlight = "0.26.8"
+tree-sitter-md = { version = "0.5.3", features = ["parser"] }
+tree-sitter-zsh = "0.63.3"
+
+[dev-dependencies]
+insta = "1"
+tempfile = "3"
