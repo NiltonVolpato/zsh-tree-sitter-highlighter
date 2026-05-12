@@ -42,7 +42,7 @@ _zsh_ts_highlighter() {
     local text="$BUFFER"
     local lines_count=0
     if [[ -n "$text" ]]; then
-        lines_count=$(printf '%s' "$text" | grep -c '')
+        lines_count=$(( ${#${BUFFER//[^$'\n']/}} + 1 ))
     fi
 
     local lang="${FORGE_PROMPT_LANG:-zsh}"

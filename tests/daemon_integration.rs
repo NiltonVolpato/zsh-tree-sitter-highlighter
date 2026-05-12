@@ -1,7 +1,7 @@
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::Duration,
@@ -19,7 +19,7 @@ fn exe_path() -> PathBuf {
         })
 }
 
-fn wait_for_socket(socket: &PathBuf, timeout_ms: u64) -> bool {
+fn wait_for_socket(socket: &Path, timeout_ms: u64) -> bool {
     for _ in 0..timeout_ms / 10 {
         if socket.exists() {
             return true;
@@ -29,7 +29,7 @@ fn wait_for_socket(socket: &PathBuf, timeout_ms: u64) -> bool {
     false
 }
 
-fn send_request(socket: &PathBuf, header: &str, lines: &[&str]) -> Vec<String> {
+fn send_request(socket: &Path, header: &str, lines: &[&str]) -> Vec<String> {
     let mut stream = UnixStream::connect(socket).expect("connect failed");
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -169,4 +169,58 @@ fn test_activate_renders_valid_zsh_script() {
 
     let output = child.wait_with_output().expect("failed to wait for zsh");
     assert!(output.status.success(), "zsh -n failed: {}", String::from_utf8_lossy(&output.stderr));
+}
+
+/// End-to-end test: activate the highlighter in a real zsh with a PTY (via expect),
+/// type a command, and verify that syntax highlighting ANSI escape codes appear.
+#[test]
+fn test_highlighting_works_in_zsh() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("daemon.sock");
+    let mut daemon = start_daemon_in(dir.path());
+
+    assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
+
+    let exe = exe_path();
+    let runtime_dir_str = dir.path().to_str().unwrap();
+
+    let expect_script = format!(
+        r#"
+set timeout 5
+spawn zsh -f
+expect "% "
+send "export XDG_RUNTIME_DIR={runtime_dir_str}\r"
+expect "% "
+send "eval \"\$({exe} activate)\"\r"
+expect "% "
+send "echo -n foo\r"
+expect "% "
+send "exit\r"
+expect eof
+"#,
+        exe = exe.to_str().unwrap(),
+        runtime_dir_str = runtime_dir_str,
+    );
+
+    let result = Command::new("expect")
+        .arg("-c")
+        .arg(&expect_script)
+        .output()
+        .expect("failed to run expect");
+
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+
+    assert!(
+        result.status.success(),
+        "expect failed\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    // Syntax highlighting produces ANSI 24-bit color escapes: \x1b[38;2;...
+    assert!(
+        stdout.contains("\x1b[38;2;"),
+        "expected ANSI color escapes in output (highlighting not working)\nstdout: {stdout}\nstderr: {stderr}"
+    );
 }
