@@ -468,16 +468,6 @@ mod tests {
         HighlightEngine::new_without_dynamic(tokyonight_dark()).unwrap()
     }
 
-    fn fmt_spans(spans: &[Span], source: &str) -> String {
-        let chars: Vec<char> = source.chars().collect();
-        let mut lines = Vec::new();
-        for s in spans {
-            let text: String = chars[s.start..s.end.min(chars.len())].iter().collect();
-            lines.push(format!("{}..{} {} = {:?}", s.start, s.end, s.style, text));
-        }
-        lines.join("\n") + "\n"
-    }
-
     fn spans_to_segments(spans: &[Span], source: &str) -> Vec<(String, String)> {
         spans
             .iter()
@@ -488,9 +478,9 @@ mod tests {
             .collect()
     }
 
-    fn assert_highlights(source: &str, expected: &[(&str, &str)]) {
+    fn assert_highlights(source: &str, lang: LanguageConfig, expected: &[(&str, &str)]) {
         let e = engine();
-        let spans = e.highlight(LanguageConfig::Zsh, source).unwrap();
+        let spans = e.highlight(lang, source).unwrap();
         let expected_string: Vec<(String, String)> = expected
             .iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
@@ -498,123 +488,158 @@ mod tests {
         assert_that!(spans_to_segments(&spans, source), eq(&expected_string));
     }
 
+    fn assert_zsh_highlights(source: &str, expected: &[(&str, &str)]) {
+        assert_highlights(source, LanguageConfig::Zsh, expected);
+    }
+
+    fn assert_md_highlights(source: &str, expected: &[(&str, &str)]) {
+        assert_highlights(source, LanguageConfig::Markdown, expected);
+    }
+
     #[test]
     fn snapshot_zsh_echo_hello() {
-        assert_highlights("echo hello", &[("echo", "fg=#7aa2f7")]);
+        assert_zsh_highlights("echo hello", &[("echo", "fg=#7aa2f7")]);
     }
 
     #[test]
     fn snapshot_zsh_combined_static_dynamic() {
         let e = HighlightEngine::new(tokyonight_dark()).unwrap();
-        let source = "echo hello";
-        let spans = e.highlight(LanguageConfig::Zsh, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        let spans = e.highlight(LanguageConfig::Zsh, "echo hello").unwrap();
+        assert_that!(
+            spans_to_segments(&spans, "echo hello"),
+            eq(&vec![("echo".into(), "fg=#7aa2f7".into())])
+        );
     }
 
     #[test]
     fn snapshot_zsh_comment() {
-        let e = engine();
-        let source = "# foo bar";
-        let spans = e.highlight(LanguageConfig::Zsh, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_zsh_highlights("# foo bar", &[("# foo bar", "fg=#565f89")]);
     }
 
     #[test]
     fn snapshot_zsh_quoted_string() {
-        let e = engine();
-        let source = r#"echo "hello world""#;
-        let spans = e.highlight(LanguageConfig::Zsh, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_zsh_highlights(
+            r#"echo "hello world""#,
+            &[("echo", "fg=#7aa2f7"), ("\"hello world\"", "fg=#e0af68")],
+        );
     }
 
     #[test]
     fn snapshot_zsh_variable() {
-        let e = engine();
-        let source = "echo $HOME";
-        let spans = e.highlight(LanguageConfig::Zsh, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_zsh_highlights("echo $HOME", &[("echo", "fg=#7aa2f7")]);
     }
 
     #[test]
     fn snapshot_zsh_subshell() {
-        let e = engine();
-        let source = "echo $(date)";
-        let spans = e.highlight(LanguageConfig::Zsh, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_zsh_highlights(
+            "echo $(date)",
+            &[
+                ("echo", "fg=#7aa2f7"),
+                ("$(", "fg=#73daca"),
+                ("date", "fg=#7aa2f7"),
+                (")", "fg=#73daca"),
+            ],
+        );
     }
 
     #[test]
     fn snapshot_zsh_pipe_redir() {
-        let e = engine();
-        let source = "cat file | grep foo > out.txt";
-        let spans = e.highlight(LanguageConfig::Zsh, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_zsh_highlights(
+            "cat file | grep foo > out.txt",
+            &[
+                ("cat", "fg=#7aa2f7"),
+                ("|", "fg=#7882bf"),
+                ("grep", "fg=#7aa2f7"),
+                (">", "fg=#7882bf"),
+            ],
+        );
     }
 
     #[test]
     fn snapshot_md_heading() {
-        let e = engine();
-        let source = "# Hello\n";
-        let spans = e.highlight(LanguageConfig::Markdown, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_md_highlights(
+            "# Hello\n",
+            &[("#", "fg=#ff9e64"), ("Hello", "fg=#7aa2f7,bold")],
+        );
     }
 
     #[test]
     fn snapshot_md_bold() {
-        let e = engine();
-        let source = "**hello**\n";
-        let spans = e.highlight(LanguageConfig::Markdown, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_md_highlights(
+            "**hello**\n",
+            &[
+                ("**hello**", "bold"),
+                ("**", "fg=#7882bf"),
+                ("**", "fg=#7882bf"),
+            ],
+        );
     }
 
     #[test]
     fn snapshot_md_italic() {
-        let e = engine();
-        let source = "*hello*\n";
-        let spans = e.highlight(LanguageConfig::Markdown, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_md_highlights(
+            "*hello*\n",
+            &[
+                ("*hello*", "italic"),
+                ("*", "fg=#7882bf"),
+                ("*", "fg=#7882bf"),
+            ],
+        );
     }
 
     #[test]
     fn snapshot_md_inline_code() {
-        let e = engine();
-        let source = "use `cmd` here\n";
-        let spans = e.highlight(LanguageConfig::Markdown, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_md_highlights(
+            "use `cmd` here\n",
+            &[
+                ("`cmd`", "fg=#e0af68"),
+                ("`", "fg=#7882bf"),
+                ("`", "fg=#7882bf"),
+            ],
+        );
     }
 
     #[test]
     fn snapshot_md_code_fence_zsh() {
-        let e = engine();
-        let source = "```zsh\necho hi\n```\n";
-        let spans = e.highlight(LanguageConfig::Markdown, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_md_highlights(
+            "```zsh\necho hi\n```\n",
+            &[
+                ("```zsh\necho hi\n```\n", "fg=#e0af68"),
+                ("```", "fg=#7882bf"),
+                ("```", "fg=#7882bf"),
+            ],
+        );
     }
 
     #[test]
     fn snapshot_md_link() {
-        let e = engine();
-        let source = "[link](https://example.com)\n";
-        let spans = e.highlight(LanguageConfig::Markdown, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_md_highlights(
+            "[link](https://example.com)\n",
+            &[
+                ("[", "fg=#7882bf"),
+                ("link", "fg=#1abc9c"),
+                ("](", "fg=#7882bf"),
+                ("https://example.com", "fg=#1abc9c,underline"),
+                (")", "fg=#7882bf"),
+            ],
+        );
     }
 
     #[test]
     fn snapshot_md_unordered_list() {
-        let e = engine();
-        let source = "- foo\n- bar\n";
-        let spans = e.highlight(LanguageConfig::Markdown, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_md_highlights(
+            "- foo\n- bar\n",
+            &[("- ", "fg=#ff9e64"), ("- ", "fg=#ff9e64")],
+        );
     }
 
     #[test]
     fn snapshot_md_task_list() {
-        let e = engine();
-        let source = "- [x] done\n- [ ] todo\n";
-        let spans = e.highlight(LanguageConfig::Markdown, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_md_highlights(
+            "- [x] done\n- [ ] todo\n",
+            &[("- ", "fg=#ff9e64"), ("- ", "fg=#ff9e64")],
+        );
     }
-
     #[test]
     fn highlight_md_code_block_with_zsh_injection() {
         let e = engine();
