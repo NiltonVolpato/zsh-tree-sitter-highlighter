@@ -478,41 +478,29 @@ mod tests {
         lines.join("\n") + "\n"
     }
 
-    #[derive(Debug, PartialEq)]
-    struct Segment {
-        text: String,
-        style: String,
-    }
-
-    impl Segment {
-        fn new(text: &str, style: &str) -> Self {
-            Self {
-                text: text.to_string(),
-                style: style.to_string(),
-            }
-        }
-    }
-
-    fn spans_to_segments(spans: &[Span], source: &str) -> Vec<Segment> {
-        let chars: Vec<char> = source.chars().collect();
+    fn spans_to_segments(spans: &[Span], source: &str) -> Vec<(String, String)> {
         spans
             .iter()
             .map(|s| {
-                let text: String = chars[s.start..s.end.min(chars.len())].iter().collect();
-                Segment::new(&text, &s.style)
+                let text: String = source.chars().skip(s.start).take(s.end - s.start).collect();
+                (text.to_string(), s.style.to_string())
             })
             .collect()
     }
 
+    fn assert_highlights(source: &str, expected: &[(&str, &str)]) {
+        let e = engine();
+        let spans = e.highlight(LanguageConfig::Zsh, source).unwrap();
+        let expected_string: Vec<(String, String)> = expected
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        assert_that!(spans_to_segments(&spans, source), eq(&expected_string));
+    }
+
     #[test]
     fn snapshot_zsh_echo_hello() {
-        let e = engine();
-        let source = "echo hello";
-        let spans = e.highlight(LanguageConfig::Zsh, source).unwrap();
-        assert_that!(
-            spans_to_segments(&spans, source),
-            eq(&[Segment::new("echo", "fg=#7aa2f7")])
-        );
+        assert_highlights("echo hello", &[("echo", "fg=#7aa2f7")]);
     }
 
     #[test]
