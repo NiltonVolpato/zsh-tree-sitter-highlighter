@@ -13,5 +13,6 @@ tree-sitter-md = { version = "0.5.3", features = ["parser"] }
 tree-sitter-zsh = "0.63.3"
 
 [dev-dependencies]
+googletest = "0.14.2"
 insta = "1"
 tempfile = "3"

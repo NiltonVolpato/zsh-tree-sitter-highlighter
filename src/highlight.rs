@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use tree_sitter::StreamingIterator;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
+use crate::dynamic::{LookupEnv, blend_spans, dynamic_highlight_zsh};
 use crate::theme::Theme;
-use crate::dynamic::{blend_spans, dynamic_highlight_zsh, LookupEnv};
 
 /// A highlighted span with character (not byte) offsets.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,6 +11,16 @@ pub struct Span {
     pub start: usize,
     pub end: usize,
     pub style: String,
+}
+
+impl Span {
+    fn new(range: std::ops::Range<usize>, style: String) -> Self {
+        Self {
+            start: range.start,
+            end: range.end,
+            style,
+        }
+    }
 }
 
 /// Supported languages.
@@ -37,14 +47,9 @@ impl HighlightEngine {
         let md_lang: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
         let md_inline_lang: tree_sitter::Language = tree_sitter_md::INLINE_LANGUAGE.into();
 
-        let mut zsh_config = HighlightConfiguration::new(
-            zsh_lang,
-            "zsh",
-            tree_sitter_zsh::HIGHLIGHT_QUERY,
-            "",
-            "",
-        )
-        .context("failed to create zsh highlight configuration")?;
+        let mut zsh_config =
+            HighlightConfiguration::new(zsh_lang, "zsh", tree_sitter_zsh::HIGHLIGHT_QUERY, "", "")
+                .context("failed to create zsh highlight configuration")?;
 
         let mut md_block_config = HighlightConfiguration::new(
             md_lang,
@@ -69,10 +74,8 @@ impl HighlightEngine {
         md_block_config.configure(&names);
         md_inline_config.configure(&names);
 
-        let md_block_capture_map =
-            build_capture_map(md_block_config.names(), theme.names());
-        let md_inline_capture_map =
-            build_capture_map(md_inline_config.names(), theme.names());
+        let md_block_capture_map = build_capture_map(md_block_config.names(), theme.names());
+        let md_inline_capture_map = build_capture_map(md_inline_config.names(), theme.names());
 
         Ok(Self {
             zsh_config,
@@ -168,15 +171,16 @@ impl HighlightEngine {
 
         // 2. Inline captures for every inline node.
         let mut inline_nodes = Vec::new();
-        collect_nodes_by_kind(md_tree.block_tree().root_node(), "inline", &mut inline_nodes);
+        collect_nodes_by_kind(
+            md_tree.block_tree().root_node(),
+            "inline",
+            &mut inline_nodes,
+        );
         for inline_node in inline_nodes {
             if let Some(inline_tree) = md_tree.inline_tree(&inline_node) {
                 let mut cursor = tree_sitter::QueryCursor::new();
-                let mut captures = cursor.captures(
-                    &self.md_inline_config.query,
-                    inline_tree.root_node(),
-                    text,
-                );
+                let mut captures =
+                    cursor.captures(&self.md_inline_config.query, inline_tree.root_node(), text);
                 loop {
                     captures.advance();
                     if let Some((m, capture_idx)) = captures.get() {
@@ -210,7 +214,9 @@ impl HighlightEngine {
             let mut cursor = block.walk();
             for child in block.children(&mut cursor) {
                 match child.kind() {
-                    "language" => language = Some(&source_to_parse[child.start_byte()..child.end_byte()]),
+                    "language" => {
+                        language = Some(&source_to_parse[child.start_byte()..child.end_byte()])
+                    }
                     "code_fence_content" => {
                         code_range = Some((child.start_byte(), child.end_byte()));
                     }
@@ -218,7 +224,10 @@ impl HighlightEngine {
                 }
             }
 
-            if matches!(language, Some("zsh") | Some("bash") | Some("sh") | Some("shell")) {
+            if matches!(
+                language,
+                Some("zsh") | Some("bash") | Some("sh") | Some("shell")
+            ) {
                 if let Some((code_start, code_end)) = code_range {
                     let code = &source_to_parse[code_start..code_end];
                     let mut highlighter = Highlighter::new();
@@ -251,11 +260,7 @@ impl HighlightEngine {
                                     if let Some(style) = self.theme.style_by_index(idx) {
                                         let ansi = style.to_ansi();
                                         if !ansi.is_empty() {
-                                            spans.push(Span {
-                                                start: char_start,
-                                                end: char_end,
-                                                style: ansi,
-                                            });
+                                            spans.push(Span::new(char_start..char_end, ansi));
                                         }
                                     }
                                 }
@@ -292,11 +297,7 @@ impl HighlightEngine {
         if ansi.is_empty() {
             return None;
         }
-        Some(Span {
-            start: char_start,
-            end: char_end,
-            style: ansi,
-        })
+        Some(Span::new(char_start..char_end, ansi))
     }
 
     fn events_to_spans<'a>(
@@ -328,11 +329,7 @@ impl HighlightEngine {
                         if let Some(style) = self.theme.style_by_index(idx) {
                             let ansi = style.to_ansi();
                             if !ansi.is_empty() {
-                                spans.push(Span {
-                                    start: char_start,
-                                    end: char_end,
-                                    style: ansi,
-                                });
+                                spans.push(Span::new(char_start..char_end, ansi));
                             }
                         }
                     }
@@ -346,7 +343,11 @@ impl HighlightEngine {
     #[cfg(test)]
     pub fn all_capture_names(&self) -> Vec<String> {
         let mut names = Vec::new();
-        for config in [&self.zsh_config, &self.md_block_config, &self.md_inline_config] {
+        for config in [
+            &self.zsh_config,
+            &self.md_block_config,
+            &self.md_inline_config,
+        ] {
             for name in config.names() {
                 if !names.contains(&name.to_string()) {
                     names.push(name.to_string());
@@ -419,7 +420,11 @@ fn build_capture_map(query_names: &[&str], theme_names: &[String]) -> Vec<Option
         .collect()
 }
 
-fn collect_nodes_by_kind<'a>(node: tree_sitter::Node<'a>, kind: &str, result: &mut Vec<tree_sitter::Node<'a>>) {
+fn collect_nodes_by_kind<'a>(
+    node: tree_sitter::Node<'a>,
+    kind: &str,
+    result: &mut Vec<tree_sitter::Node<'a>>,
+) {
     if node.kind() == kind {
         result.push(node);
         return;
@@ -434,6 +439,7 @@ fn collect_nodes_by_kind<'a>(node: tree_sitter::Node<'a>, kind: &str, result: &m
 mod tests {
     use super::*;
     use crate::theme::tokyonight_dark;
+    use googletest::prelude::*;
 
     #[test]
     fn byte_to_char_with_ascii() {
@@ -472,12 +478,41 @@ mod tests {
         lines.join("\n") + "\n"
     }
 
+    #[derive(Debug, PartialEq)]
+    struct Segment {
+        text: String,
+        style: String,
+    }
+
+    impl Segment {
+        fn new(text: &str, style: &str) -> Self {
+            Self {
+                text: text.to_string(),
+                style: style.to_string(),
+            }
+        }
+    }
+
+    fn spans_to_segments(spans: &[Span], source: &str) -> Vec<Segment> {
+        let chars: Vec<char> = source.chars().collect();
+        spans
+            .iter()
+            .map(|s| {
+                let text: String = chars[s.start..s.end.min(chars.len())].iter().collect();
+                Segment::new(&text, &s.style)
+            })
+            .collect()
+    }
+
     #[test]
     fn snapshot_zsh_echo_hello() {
         let e = engine();
         let source = "echo hello";
         let spans = e.highlight(LanguageConfig::Zsh, source).unwrap();
-        insta::assert_snapshot!(fmt_spans(&spans, source));
+        assert_that!(
+            spans_to_segments(&spans, source),
+            eq(&[Segment::new("echo", "fg=#7aa2f7")])
+        );
     }
 
     #[test]
@@ -616,10 +651,6 @@ mod tests {
                 missing.push(name.clone());
             }
         }
-        assert!(
-            missing.is_empty(),
-            "theme missing captures: {:?}",
-            missing
-        );
+        assert!(missing.is_empty(), "theme missing captures: {:?}", missing);
     }
 }
