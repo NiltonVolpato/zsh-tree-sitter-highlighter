@@ -214,8 +214,15 @@ impl HighlightEngine {
             let mut cursor = block.walk();
             for child in block.children(&mut cursor) {
                 match child.kind() {
-                    "language" => {
-                        language = Some(&source_to_parse[child.start_byte()..child.end_byte()])
+                    "info_string" => {
+                        let mut info_cursor = child.walk();
+                        for info_child in child.children(&mut info_cursor) {
+                            if info_child.kind() == "language" {
+                                language = Some(
+                                    &source_to_parse[info_child.start_byte()..info_child.end_byte()],
+                                );
+                            }
+                        }
                     }
                     "code_fence_content" => {
                         code_range = Some((child.start_byte(), child.end_byte()));
@@ -271,6 +278,9 @@ impl HighlightEngine {
             }
         }
 
+        // Sort by start position; for equal starts, longer spans come first so that
+        // region_highlight's "last wins" gives precedence to shorter (more specific) spans.
+        spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
         Ok(merge_spans(spans))
     }
 
@@ -606,6 +616,7 @@ mod tests {
             &[
                 ("```zsh\necho hi\n```\n", "fg=#e0af68"),
                 ("```", "fg=#7882bf"),
+                ("echo", "fg=#7aa2f7"),
                 ("```", "fg=#7882bf"),
             ],
         );
@@ -646,7 +657,12 @@ mod tests {
         let source = "```zsh\necho hi\n```";
         let spans = e.highlight(LanguageConfig::Markdown, source).unwrap();
         // Should contain zsh-style highlighting inside the code block
-        assert!(!spans.is_empty());
+        let segments = spans_to_segments(&spans, source);
+        assert!(
+            segments.iter().any(|(text, style)| text == "echo" && style.contains("fg=#7aa2f7")),
+            "expected zsh-style span for 'echo', got: {:?}",
+            segments
+        );
     }
 
     #[test]

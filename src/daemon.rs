@@ -87,7 +87,7 @@ fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Re
     }
 
     // trim trailing newline that we added for protocol framing
-    while text.ends_with('\n') {
+    if text.ends_with('\n') {
         text.pop();
     }
 
