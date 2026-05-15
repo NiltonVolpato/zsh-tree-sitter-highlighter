@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::Path;
 
 use crate::highlight::Span;
@@ -108,13 +108,13 @@ fn is_in_path(name: &str) -> bool {
 }
 
 /// Run dynamic highlighting on zsh source and return additional spans.
-pub fn dynamic_highlight_zsh(source: &str, lookups: &LookupEnv) -> Result<Vec<Span>> {
+/// Accepts a pre-parsed tree to avoid double-parsing.
+pub fn dynamic_highlight_zsh(
+    tree: &tree_sitter::Tree,
+    source: &str,
+    lookups: &LookupEnv,
+) -> Result<Vec<Span>> {
     let mut spans = Vec::new();
-
-    let language: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&language)?;
-    let tree = parser.parse(source, None).context("zsh parsing failed")?;
 
     let root = tree.root_node();
     walk_node(root, source, lookups, &mut spans);
@@ -188,6 +188,10 @@ fn looks_like_path(text: &str) -> bool {
 }
 
 /// Blend static and dynamic spans. Dynamic spans override static styles where they overlap.
+///
+/// Base spans may overlap (e.g., a `string` span containing an `embedded` span containing a
+/// `command` span). Following `region_highlight` last-wins semantics, the most specific (latest
+/// in sorted order) active base span wins for each position.
 pub fn blend_spans(base: Vec<Span>, mixins: Vec<Span>) -> Vec<Span> {
     if mixins.is_empty() {
         return base;
@@ -214,14 +218,25 @@ pub fn blend_spans(base: Vec<Span>, mixins: Vec<Span>) -> Vec<Span> {
     for w in positions.windows(2) {
         let (lo, hi) = (w[0], w[1]);
 
+        // Advance past base spans that end before this window
         while bi < base.len() && base[bi].end <= lo {
             bi += 1;
         }
+        // Advance past mixin spans that end before this window
         while mi < mixins.len() && mixins[mi].end <= lo {
             mi += 1;
         }
 
-        let active_base = base.get(bi).filter(|s| s.start <= lo && hi <= s.end);
+        // Find the most specific active base span (last one that covers this window).
+        // Base spans are sorted by (start, -end), so later spans at the same start are
+        // shorter/more specific. For overlapping spans, the last matching one wins
+        // (region_highlight last-wins semantics).
+        let active_base = base[bi..]
+            .iter()
+            .take_while(|s| s.start <= lo)
+            .filter(|s| hi <= s.end)
+            .last();
+
         let active_mixin = mixins.get(mi).filter(|s| s.start <= lo && hi <= s.end);
 
         let style = match (active_base, active_mixin) {
@@ -310,6 +325,13 @@ fn mix_ansi(base: &str, mixin: &str) -> String {
 mod tests {
     use super::*;
 
+    fn parse_zsh(source: &str) -> tree_sitter::Tree {
+        let language: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language).unwrap();
+        parser.parse(source, None).unwrap()
+    }
+
     #[test]
     fn blend_empty() {
         let base = vec![Span {
@@ -361,7 +383,8 @@ mod tests {
             resolve_command: Box::new(|_| CommandType::Missing),
             resolve_path: Box::new(|_| None),
         };
-        let spans = dynamic_highlight_zsh(source, &lookups).unwrap();
+        let tree = parse_zsh(source);
+        let spans = dynamic_highlight_zsh(&tree, source, &lookups).unwrap();
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].start, 0);
         assert_eq!(spans[0].end, 10);
@@ -375,10 +398,66 @@ mod tests {
             resolve_command: Box::new(|_| CommandType::Builtin),
             resolve_path: Box::new(|_| Some(PathType::File)),
         };
-        let spans = dynamic_highlight_zsh(source, &lookups).unwrap();
+        let tree = parse_zsh(source);
+        let spans = dynamic_highlight_zsh(&tree, source, &lookups).unwrap();
         assert!(
             spans.iter().any(|s| s.style == "underline"),
             "expected underline span for path"
+        );
+    }
+
+    #[test]
+    fn blend_overlapping_base_picks_most_specific() {
+        // Simulates: string [5..28] containing embedded [6..27] containing command [8..11]
+        // With a dynamic mixin (underline) on [16..26] for a file path.
+        // blend_spans should pick the most specific (last) active base span at each position.
+        let base = vec![
+            Span { start: 0, end: 4, style: "fg=#7aa2f7".into() },           // echo
+            Span { start: 5, end: 28, style: "fg=#e0af68".into() },          // string
+            Span { start: 6, end: 27, style: "fg=#73daca".into() },          // embedded
+            Span { start: 8, end: 11, style: "fg=#7aa2f7".into() },          // cat
+            Span { start: 12, end: 14, style: "fg=#ff9e64".into() },         // -v
+            Span { start: 15, end: 16, style: "fg=#7882bf".into() },         // <
+        ];
+        let mixins = vec![
+            Span { start: 16, end: 26, style: "underline".into() },          // /etc/paths
+        ];
+        let result = blend_spans(base, mixins);
+
+        // Check that the embedded color (teal) appears for the $() delimiters
+        assert!(
+            result.iter().any(|s| s.style.contains("fg=#73daca") && s.start == 6 && s.end == 8),
+            "expected embedded teal for '$(' at [6..8], got: {:?}",
+            result
+        );
+        assert!(
+            result.iter().any(|s| s.style.contains("fg=#73daca") && s.start == 11 && s.end == 12),
+            "expected embedded teal for space at [11..12], got: {:?}",
+            result
+        );
+        // The file path should have embedded teal + underline
+        assert!(
+            result.iter().any(|s| s.style.contains("fg=#73daca") && s.style.contains("underline")
+                && s.start == 16 && s.end == 26),
+            "expected embedded teal+underline for path at [16..26], got: {:?}",
+            result
+        );
+        // The string quotes should be string orange
+        assert!(
+            result.iter().any(|s| s.style == "fg=#e0af68" && s.start == 5 && s.end == 6),
+            "expected string orange for opening quote at [5..6], got: {:?}",
+            result
+        );
+        assert!(
+            result.iter().any(|s| s.style == "fg=#e0af68" && s.start == 27 && s.end == 28),
+            "expected string orange for closing quote at [27..28], got: {:?}",
+            result
+        );
+        // The ) before the closing quote should be embedded teal
+        assert!(
+            result.iter().any(|s| s.style.contains("fg=#73daca") && s.start == 26 && s.end == 27),
+            "expected embedded teal for ')' at [26..27], got: {:?}",
+            result
         );
     }
 }

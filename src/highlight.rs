@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use tree_sitter::StreamingIterator;
-use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
+use tree_sitter_highlight::HighlightConfiguration;
 
 use crate::dynamic::{LookupEnv, blend_spans, dynamic_highlight_zsh};
 use crate::theme::Theme;
@@ -32,7 +32,8 @@ pub enum LanguageConfig {
 
 /// Holds the pre-configured highlight configurations for each language.
 pub struct HighlightEngine {
-    zsh_config: HighlightConfiguration,
+    zsh_query: tree_sitter::Query,
+    zsh_capture_map: Vec<Option<usize>>,
     md_block_config: HighlightConfiguration,
     md_inline_config: HighlightConfiguration,
     md_block_capture_map: Vec<Option<usize>>,
@@ -47,9 +48,8 @@ impl HighlightEngine {
         let md_lang: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
         let md_inline_lang: tree_sitter::Language = tree_sitter_md::INLINE_LANGUAGE.into();
 
-        let mut zsh_config =
-            HighlightConfiguration::new(zsh_lang, "zsh", tree_sitter_zsh::HIGHLIGHT_QUERY, "", "")
-                .context("failed to create zsh highlight configuration")?;
+        let zsh_query = tree_sitter::Query::new(&zsh_lang, tree_sitter_zsh::HIGHLIGHT_QUERY)
+            .context("failed to create zsh highlight query")?;
 
         let mut md_block_config = HighlightConfiguration::new(
             md_lang,
@@ -70,15 +70,16 @@ impl HighlightEngine {
         .context("failed to create markdown inline highlight configuration")?;
 
         let names: Vec<&str> = theme.names().iter().map(|s| s.as_str()).collect();
-        zsh_config.configure(&names);
         md_block_config.configure(&names);
         md_inline_config.configure(&names);
 
+        let zsh_capture_map = build_capture_map(zsh_query.capture_names(), theme.names());
         let md_block_capture_map = build_capture_map(md_block_config.names(), theme.names());
         let md_inline_capture_map = build_capture_map(md_inline_config.names(), theme.names());
 
         Ok(Self {
-            zsh_config,
+            zsh_query,
+            zsh_capture_map,
             md_block_config,
             md_inline_config,
             md_block_capture_map,
@@ -104,14 +105,42 @@ impl HighlightEngine {
     }
 
     fn highlight_zsh(&self, source: &str) -> Result<Vec<Span>> {
-        let mut highlighter = Highlighter::new();
-        let events = highlighter
-            .highlight(&self.zsh_config, source.as_bytes(), None, |_| None)
-            .context("highlighting failed")?;
-        let static_spans = self.events_to_spans(source, events)?;
+        let language: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language)?;
+        let tree = parser
+            .parse(source, None)
+            .context("zsh parsing failed")?;
+
+        let byte_to_char = build_byte_to_char_table(source);
+        let char_len = source.chars().count();
+        let text = source.as_bytes();
+
+        let mut static_spans = Vec::new();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut captures = cursor.captures(&self.zsh_query, tree.root_node(), text);
+        loop {
+            captures.advance();
+            if let Some((m, capture_idx)) = captures.get() {
+                let capture = m.captures[*capture_idx];
+                if let Some(span) = self.capture_to_span(
+                    capture.index as usize,
+                    capture.node,
+                    &byte_to_char,
+                    char_len,
+                    &self.zsh_capture_map,
+                ) {
+                    static_spans.push(span);
+                }
+            } else {
+                break;
+            }
+        }
+        static_spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+        let static_spans = merge_spans(static_spans);
 
         if let Some(ref env) = self.dynamic_env {
-            let dynamic_spans = dynamic_highlight_zsh(source, env)?;
+            let dynamic_spans = dynamic_highlight_zsh(&tree, source, env)?;
             Ok(blend_spans(static_spans, dynamic_spans))
         } else {
             Ok(static_spans)
@@ -237,40 +266,51 @@ impl HighlightEngine {
             ) {
                 if let Some((code_start, code_end)) = code_range {
                     let code = &source_to_parse[code_start..code_end];
-                    let mut highlighter = Highlighter::new();
-                    let events = highlighter
-                        .highlight(&self.zsh_config, code.as_bytes(), None, |_| None)
-                        .context("zsh injection highlight failed")?;
-                    // Convert injection events, offsetting back to document coords.
-                    let mut stack: Vec<usize> = Vec::new();
-                    for event in events {
-                        let event = event.context("highlight event error")?;
-                        match event {
-                            HighlightEvent::HighlightStart(h) => stack.push(h.0),
-                            HighlightEvent::HighlightEnd => {
-                                stack.pop();
-                            }
-                            HighlightEvent::Source { start, end } => {
-                                if start == end {
+                    let zsh_lang: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
+                    let mut zsh_parser = tree_sitter::Parser::new();
+                    zsh_parser.set_language(&zsh_lang)?;
+                    let zsh_tree = zsh_parser.parse(code, None);
+
+                    if let Some(zsh_tree) = zsh_tree {
+                        let code_byte_to_char = build_byte_to_char_table(code);
+                        let code_char_len = code.chars().count();
+                        let mut qcursor = tree_sitter::QueryCursor::new();
+                        let mut captures =
+                            qcursor.captures(&self.zsh_query, zsh_tree.root_node(), code.as_bytes());
+                        loop {
+                            captures.advance();
+                            if let Some((m, capture_idx)) = captures.get() {
+                                let capture = m.captures[*capture_idx];
+                                let node = capture.node;
+                                let start = node.start_byte();
+                                let end = node.end_byte();
+                                let source_len = code_byte_to_char.len().saturating_sub(1);
+                                let start = start.min(source_len);
+                                let end = end.min(source_len);
+                                let local_char_start = code_byte_to_char[start].min(code_char_len);
+                                let local_char_end = code_byte_to_char[end].min(code_char_len);
+                                if local_char_start >= local_char_end {
                                     continue;
                                 }
-                                let doc_byte_start = code_start + start;
-                                let doc_byte_end = code_start + end;
-                                let char_start =
-                                    byte_to_char[doc_byte_start.min(byte_to_char.len() - 1)];
-                                let char_end =
-                                    byte_to_char[doc_byte_end.min(byte_to_char.len() - 1)];
-                                if char_start == char_end {
-                                    continue;
+                                let doc_char_start =
+                                    byte_to_char[(code_start + start).min(byte_to_char.len() - 1)];
+                                let doc_char_end =
+                                    byte_to_char[(code_start + end).min(byte_to_char.len() - 1)];
+                                if let Some(span) = self.capture_to_span(
+                                    capture.index as usize,
+                                    node,
+                                    &byte_to_char,
+                                    char_len,
+                                    &self.zsh_capture_map,
+                                ) {
+                                    // Override with correctly offset spans
+                                    spans.push(Span::new(
+                                        doc_char_start..doc_char_end,
+                                        span.style,
+                                    ));
                                 }
-                                if let Some(&idx) = stack.last() {
-                                    if let Some(style) = self.theme.style_by_index(idx) {
-                                        let ansi = style.to_ansi();
-                                        if !ansi.is_empty() {
-                                            spans.push(Span::new(char_start..char_end, ansi));
-                                        }
-                                    }
-                                }
+                            } else {
+                                break;
                             }
                         }
                     }
@@ -310,54 +350,18 @@ impl HighlightEngine {
         Some(Span::new(char_start..char_end, ansi))
     }
 
-    fn events_to_spans<'a>(
-        &self,
-        source: &str,
-        events: impl Iterator<Item = Result<HighlightEvent, tree_sitter_highlight::Error>>,
-    ) -> Result<Vec<Span>> {
-        let byte_to_char = build_byte_to_char_table(source);
-        let mut spans = Vec::new();
-        let mut stack: Vec<usize> = Vec::new();
 
-        for event in events {
-            let event = event.context("highlight event error")?;
-            match event {
-                HighlightEvent::HighlightStart(h) => stack.push(h.0),
-                HighlightEvent::HighlightEnd => {
-                    stack.pop();
-                }
-                HighlightEvent::Source { start, end } => {
-                    if start == end {
-                        continue;
-                    }
-                    let char_start = byte_to_char[start];
-                    let char_end = byte_to_char[end.min(byte_to_char.len() - 1)];
-                    if char_start == char_end {
-                        continue;
-                    }
-                    if let Some(&idx) = stack.last() {
-                        if let Some(style) = self.theme.style_by_index(idx) {
-                            let ansi = style.to_ansi();
-                            if !ansi.is_empty() {
-                                spans.push(Span::new(char_start..char_end, ansi));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(merge_spans(spans))
-    }
 
     /// Returns every capture name referenced by the loaded queries.
     #[cfg(test)]
     pub fn all_capture_names(&self) -> Vec<String> {
         let mut names = Vec::new();
-        for config in [
-            &self.zsh_config,
-            &self.md_block_config,
-            &self.md_inline_config,
-        ] {
+        for name in self.zsh_query.capture_names() {
+            if !names.contains(&name.to_string()) {
+                names.push(name.to_string());
+            }
+        }
+        for config in [&self.md_block_config, &self.md_inline_config] {
             for name in config.names() {
                 if !names.contains(&name.to_string()) {
                     names.push(name.to_string());
@@ -545,9 +549,8 @@ mod tests {
             "echo $(date)",
             &[
                 ("echo", "fg=#7aa2f7"),
-                ("$(", "fg=#73daca"),
+                ("$(date)", "fg=#73daca"),
                 ("date", "fg=#7aa2f7"),
-                (")", "fg=#73daca"),
             ],
         );
     }
