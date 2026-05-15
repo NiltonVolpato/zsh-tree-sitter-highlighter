@@ -29,7 +29,18 @@ impl Default for LookupEnv {
     fn default() -> Self {
         Self {
             resolve_command: Box::new(real_resolve_command),
-            resolve_path: Box::new(real_resolve_path),
+            resolve_path: Box::new(real_resolve_path(None)),
+        }
+    }
+}
+
+impl LookupEnv {
+    /// Create a LookupEnv with a specific working directory for relative path resolution.
+    pub fn with_pwd(pwd: &str) -> Self {
+        let pwd = pwd.to_string();
+        Self {
+            resolve_command: Box::new(real_resolve_command),
+            resolve_path: Box::new(real_resolve_path(Some(pwd))),
         }
     }
 }
@@ -44,30 +55,42 @@ fn real_resolve_command(name: &str) -> CommandType {
     }
 }
 
-fn real_resolve_path(path: &str) -> Option<PathType> {
-    let expanded = if path.starts_with('~') {
-        if let Some(home) = std::env::var_os("HOME") {
-            let home_str = home.to_string_lossy();
-            if path.len() == 1 {
-                home_str.into_owned()
-            } else if path.starts_with("~/") {
-                format!("{}{}", home_str, &path[1..])
+fn real_resolve_path(pwd: Option<String>) -> impl Fn(&str) -> Option<PathType> {
+    move |path: &str| {
+        let expanded = if path.starts_with('~') {
+            if let Some(home) = std::env::var_os("HOME") {
+                let home_str = home.to_string_lossy();
+                if path.len() == 1 {
+                    home_str.into_owned()
+                } else if path.starts_with("~/") {
+                    format!("{}{}", home_str, &path[1..])
+                } else {
+                    path.to_string()
+                }
             } else {
                 path.to_string()
             }
+        } else if path.starts_with("./") || path.starts_with("../") {
+            // Resolve relative paths using the provided pwd
+            if let Some(ref pwd) = pwd {
+                format!("{}/{}", pwd.trim_end_matches('/'), path)
+            } else {
+                path.to_string()
+            }
+        } else if path.contains('/') && pwd.is_some() {
+            // Bare relative path like "foo/bar" — resolve against pwd
+            format!("{}/{}", pwd.as_ref().unwrap().trim_end_matches('/'), path)
         } else {
             path.to_string()
+        };
+        let p = Path::new(&expanded);
+        if p.is_dir() {
+            Some(PathType::Directory)
+        } else if p.is_file() {
+            Some(PathType::File)
+        } else {
+            None
         }
-    } else {
-        path.to_string()
-    };
-    let p = Path::new(&expanded);
-    if p.is_dir() {
-        Some(PathType::Directory)
-    } else if p.is_file() {
-        Some(PathType::File)
-    } else {
-        None
     }
 }
 

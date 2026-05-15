@@ -8,17 +8,10 @@ zsh-tree-sitter-highlighter() {
     "$_ZSH_TS_HIGHLIGHTER_PATH" "$@"
 }
 
-_zsh_ts_highlighter_encode() {
-    # fast path
-    [[ $1 != *[%$'\t\n\r\f ']* ]] && { REPLY="$1"; return }
-
-    local s="${1//'%'/%25}"
-    s="${s//' '/%20}"
-    s="${s//$'\t'/%09}"
-    s="${s//$'\n'/%0A}"
-    s="${s//$'\r'/%0D}"
-    s="${s//$'\f'/%0C}"
-    REPLY="$s"
+# Print a key=length:value record for the protocol.
+# Usage: print_kv key "$value"
+print_kv() {
+    print -r -- "$1=${#2}:${2}"
 }
 
 _zsh_ts_highlighter() {
@@ -40,12 +33,6 @@ _zsh_ts_highlighter() {
     fi
     local fd=$REPLY
 
-    local text="$BUFFER"
-    local lines_count=0
-    if [[ -n "$text" ]]; then
-        lines_count=$(( ${#${BUFFER//[^$'\n']/}} + 1 ))
-    fi
-
     local lang="${FORGE_PROMPT_LANG:-zsh}"
 
     if [[ -z "$_ZSH_TS_HIGHLIGHTER_VERSION" ]]; then
@@ -55,11 +42,12 @@ _zsh_ts_highlighter() {
     fi
 
     {
-        local header="ver=$_ZSH_TS_HIGHLIGHTER_VERSION lang=$lang lines=$lines_count"
-        print -r -- "$header"
-        if (( lines_count > 0 )); then
-            print -r -- "$text"
-        fi
+        print_kv ver "$_ZSH_TS_HIGHLIGHTER_VERSION"
+        print_kv lang "$lang"
+        print_kv pwd "$PWD"
+        print_kv prebuffer "$PREBUFFER"
+        print_kv buffer "$BUFFER"
+        print_kv EOM ""
     } >&$fd || {
         exec {fd}>&-
         zle -M "zsh-tree-sitter-highlighter: failed to send request to daemon"
@@ -73,8 +61,9 @@ _zsh_ts_highlighter() {
         new_regions+=("$line memo=zsh_ts_highlighter")
     done
 
-    region_highlight=("${new_regions[@]}")
     exec {fd}>&-
+
+    region_highlight=("${new_regions[@]}")
 
     if [[ -z "${new_regions[@]}" ]]; then
         zle -M "zsh-tree-sitter-highlighter: daemon returned no highlights (version mismatch?)"

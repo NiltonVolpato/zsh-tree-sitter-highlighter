@@ -1,6 +1,7 @@
 mod theme;
 mod highlight;
 mod dynamic;
+mod protocol;
 mod daemon;
 
 use anyhow::{Context, Result, bail};

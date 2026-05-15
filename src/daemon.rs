@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use rayon::ThreadPoolBuilder;
 use std::{
     fs::{self, Permissions},
-    io::{BufRead, BufReader, Write, stdout},
+    io::{BufReader, Write, stdout},
     os::{
         fd::AsRawFd,
         unix::{
@@ -17,9 +17,10 @@ use std::{
 };
 
 use crate::highlight::{HighlightEngine, LanguageConfig, Span};
+use crate::protocol::read_request;
 use crate::theme::tokyonight_dark;
 
-const PROTOCOL_VERSION: &str = "1";
+const PROTOCOL_VERSION: &str = "2";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -50,57 +51,53 @@ fn pid_alive(pid: u32) -> bool {
 fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Result<()> {
     let mut reader = BufReader::new(&stream);
 
-    // read header line
-    let mut header = String::new();
-    reader
-        .read_line(&mut header)
-        .context("unable to read header")?;
+    // Read key=length:value records until the `buffer` key is seen.
+    // This avoids needing EOF: the client keeps the connection open for the response.
+    let fields = read_request(&mut reader).context("unable to read request")?;
 
-    let mut client_version = None;
-    let mut lang = "zsh";
-    let mut lines_count = 0usize;
-
-    for part in header.split_ascii_whitespace() {
-        if let Some((key, value)) = part.split_once('=') {
-            match key {
-                "ver" => client_version = Some(value),
-                "lang" => lang = value,
-                "lines" => {
-                    lines_count = value.parse().context("unable to parse lines count")?;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    // verify protocol version
-    if client_version.is_none_or(|v| v != PROTOCOL_VERSION) {
+    // Verify protocol version
+    let ver = fields.get("ver").map(|s| s.as_str()).unwrap_or("");
+    if ver != PROTOCOL_VERSION {
         return Ok(());
     }
 
-    // read exactly lines_count lines
-    let mut text = String::new();
-    for _ in 0..lines_count {
-        let mut line = String::new();
-        reader.read_line(&mut line).context("unable to read line")?;
-        text.push_str(&line);
-    }
-
-    // trim trailing newline that we added for protocol framing
-    if text.ends_with('\n') {
-        text.pop();
-    }
+    let lang = fields.get("lang").map(|s| s.as_str()).unwrap_or("zsh");
+    let prebuffer = fields.get("prebuffer").map(|s| s.as_str()).unwrap_or("");
+    let buffer = fields.get("buffer").map(|s| s.as_str()).unwrap_or("");
+    let pwd = fields.get("pwd").map(|s| s.as_str());
 
     let language = match lang {
         "markdown" | "md" => LanguageConfig::Markdown,
         _ => LanguageConfig::Zsh,
     };
 
-    let spans = engine.highlight(language, &text)?;
+    // Build full source: prebuffer + buffer
+    let full_source = format!("{prebuffer}{buffer}");
 
+    // Highlight with pwd for dynamic path resolution
+    let spans = engine.highlight_with_pwd(language, &full_source, pwd)?;
+
+    // Adjust span offsets: shift by prebuffer length, only return buffer spans
+    let prebuffer_char_len = prebuffer.chars().count();
     for span in spans {
+        // Skip spans entirely within prebuffer
+        if span.end <= prebuffer_char_len {
+            continue;
+        }
+
+        let start = if span.start < prebuffer_char_len {
+            0
+        } else {
+            span.start - prebuffer_char_len
+        };
+        let end = span.end - prebuffer_char_len;
+
+        if start >= end {
+            continue;
+        }
+
         stream
-            .write_all(format!("{} {} {}\n", span.start, span.end, span.style).as_bytes())
+            .write_all(format!("{start} {end} {}\n", span.style).as_bytes())
             .context("unable to write response")?;
     }
 

@@ -29,7 +29,7 @@ fn wait_for_socket(socket: &Path, timeout_ms: u64) -> bool {
     false
 }
 
-fn send_request(socket: &Path, header: &str, lines: &[&str]) -> Vec<String> {
+fn send_request(socket: &Path, ver: &str, lang: &str, pwd: &str, prebuffer: &str, buffer: &str) -> Vec<String> {
     let mut stream = UnixStream::connect(socket).expect("connect failed");
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -38,12 +38,16 @@ fn send_request(socket: &Path, header: &str, lines: &[&str]) -> Vec<String> {
         .set_write_timeout(Some(Duration::from_secs(2)))
         .unwrap();
 
-    stream
-        .write_all(format!("{header}\n").as_bytes())
-        .unwrap();
-    for line in lines {
-        stream.write_all(format!("{line}\n").as_bytes()).unwrap();
-    }
+    // Send key=length:value records (character counts, matching zsh ${#var})
+    let request = format!(
+        "ver={}:{}\nlang={}:{}\npwd={}:{}\nprebuffer={}:{}\nbuffer={}:{}\nEOM=0:\n",
+        ver.chars().count(), ver,
+        lang.chars().count(), lang,
+        pwd.chars().count(), pwd,
+        prebuffer.chars().count(), prebuffer,
+        buffer.chars().count(), buffer,
+    );
+    stream.write_all(request.as_bytes()).unwrap();
 
     let _ = stream.shutdown(std::net::Shutdown::Write);
 
@@ -74,7 +78,7 @@ fn test_daemon_highlight_zsh() {
 
     assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
 
-    let responses = send_request(&socket, "ver=1 lang=zsh lines=1", &["echo hello"]);
+    let responses = send_request(&socket, "2", "zsh", "/tmp", "", "echo hello");
     assert!(!responses.is_empty(), "expected at least one span");
     let first = &responses[0];
     let parts: Vec<&str> = first.split_whitespace().collect();
@@ -94,7 +98,7 @@ fn test_daemon_highlight_markdown() {
 
     assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
 
-    let responses = send_request(&socket, "ver=1 lang=md lines=1", &["# Hello"]);
+    let responses = send_request(&socket, "2", "md", "/tmp", "", "# Hello");
     assert!(!responses.is_empty(), "expected at least one span for markdown heading");
     let first = &responses[0];
     let parts: Vec<&str> = first.split_whitespace().collect();
@@ -119,7 +123,7 @@ fn test_daemon_concurrent_connections() {
     for _ in 0..4 {
         let socket = socket.clone();
         let handle = thread::spawn(move || {
-            let responses = send_request(&socket, "ver=1 lang=zsh lines=1", &["echo hello"]);
+            let responses = send_request(&socket, "2", "zsh", "/tmp", "", "echo hello");
             assert!(!responses.is_empty());
         });
         handles.push(handle);

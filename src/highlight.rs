@@ -104,7 +104,42 @@ impl HighlightEngine {
         }
     }
 
+    /// Highlight with a specific working directory for dynamic path resolution.
+    pub fn highlight_with_pwd(
+        &self,
+        lang: LanguageConfig,
+        source: &str,
+        pwd: Option<&str>,
+    ) -> Result<Vec<Span>> {
+        if let Some(pwd) = pwd {
+            let env = LookupEnv::with_pwd(pwd);
+            match lang {
+                LanguageConfig::Zsh => {
+                    let (tree, static_spans) = self.highlight_zsh_static(source)?;
+                    let dynamic_spans = dynamic_highlight_zsh(&tree, source, &env)?;
+                    Ok(blend_spans(static_spans, dynamic_spans))
+                }
+                LanguageConfig::Markdown => self.highlight_markdown(source),
+            }
+        } else {
+            self.highlight(lang, source)
+        }
+    }
+
     fn highlight_zsh(&self, source: &str) -> Result<Vec<Span>> {
+        let (tree, static_spans) = self.highlight_zsh_static(source)?;
+
+        if let Some(ref env) = self.dynamic_env {
+            let dynamic_spans = dynamic_highlight_zsh(&tree, source, env)?;
+            Ok(blend_spans(static_spans, dynamic_spans))
+        } else {
+            Ok(static_spans)
+        }
+    }
+
+    /// Run static zsh highlighting (tree-sitter query captures), returning
+    /// the parsed tree and sorted/merged spans. Callers handle dynamic highlighting.
+    fn highlight_zsh_static(&self, source: &str) -> Result<(tree_sitter::Tree, Vec<Span>)> {
         let language: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&language)?;
@@ -139,12 +174,7 @@ impl HighlightEngine {
         static_spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
         let static_spans = merge_spans(static_spans);
 
-        if let Some(ref env) = self.dynamic_env {
-            let dynamic_spans = dynamic_highlight_zsh(&tree, source, env)?;
-            Ok(blend_spans(static_spans, dynamic_spans))
-        } else {
-            Ok(static_spans)
-        }
+        Ok((tree, static_spans))
     }
 
     fn highlight_markdown(&self, source: &str) -> Result<Vec<Span>> {
@@ -296,18 +326,20 @@ impl HighlightEngine {
                                     byte_to_char[(code_start + start).min(byte_to_char.len() - 1)];
                                 let doc_char_end =
                                     byte_to_char[(code_start + end).min(byte_to_char.len() - 1)];
-                                if let Some(span) = self.capture_to_span(
-                                    capture.index as usize,
-                                    node,
-                                    &byte_to_char,
-                                    char_len,
-                                    &self.zsh_capture_map,
-                                ) {
-                                    // Override with correctly offset spans
-                                    spans.push(Span::new(
-                                        doc_char_start..doc_char_end,
-                                        span.style,
-                                    ));
+                                // Inline the theme lookup instead of calling capture_to_span,
+                                // because node byte offsets are local to the code block slice
+                                // while byte_to_char is the document-level table.
+                                let theme_idx = self.zsh_capture_map.get(capture.index as usize).copied().flatten();
+                                if let Some(theme_idx) = theme_idx {
+                                    if let Some(style) = self.theme.style_by_index(theme_idx) {
+                                        let ansi = style.to_ansi();
+                                        if !ansi.is_empty() {
+                                            spans.push(Span::new(
+                                                doc_char_start..doc_char_end,
+                                                ansi,
+                                            ));
+                                        }
+                                    }
                                 }
                             } else {
                                 break;
