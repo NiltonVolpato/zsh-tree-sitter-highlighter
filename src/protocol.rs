@@ -1,77 +1,6 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 
-/// Parse the `key=length:value` protocol format produced by the zsh integration.
-///
-/// Each key-value pair is emitted by zsh as:
-/// ```zsh
-/// print -r -- "$k=${#v}:${v}"
-/// ```
-///
-/// This produces lines like:
-/// ```text
-/// ver=1:2
-/// buffer=7:foo
-/// bar
-/// prebuffer=0:
-/// ```
-///
-/// The parser reads `key=length:` from each record, then consumes exactly `length`
-/// characters (which may span multiple lines) as the value.
-#[cfg(test)]
-pub fn parse_request(input: &str) -> Result<HashMap<String, String>, ParseError> {
-    let mut map = HashMap::new();
-    let chars: Vec<char> = input.chars().collect();
-    let total = chars.len();
-    let mut pos = 0;
-
-    while pos < total {
-        // Skip whitespace (including trailing newlines between records)
-        while pos < total && is_ws(chars[pos]) {
-            pos += 1;
-        }
-        if pos >= total {
-            break;
-        }
-
-        // Read key (up to '=')
-        let key_start = pos;
-        while pos < total && chars[pos] != '=' {
-            pos += 1;
-        }
-        if pos >= total {
-            return Err(ParseError::ExpectedEquals);
-        }
-        let key: String = chars[key_start..pos].iter().collect();
-        pos += 1; // skip '='
-
-        // Read length (digits up to ':')
-        let len_start = pos;
-        while pos < total && chars[pos] != ':' {
-            pos += 1;
-        }
-        if pos >= total {
-            return Err(ParseError::ExpectedColon);
-        }
-        let len_str: String = chars[len_start..pos].iter().collect();
-        let length: usize = len_str
-            .parse()
-            .map_err(|_| ParseError::InvalidLength)?;
-        pos += 1; // skip ':'
-
-        // Read exactly `length` characters as the value
-        if pos + length > total {
-            return Err(ParseError::UnexpectedEof);
-        }
-        let value: String = chars[pos..pos + length].iter().collect();
-        pos += length;
-
-        map.insert(key, value);
-    }
-
-    Ok(map)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
     ExpectedEquals,
@@ -110,17 +39,9 @@ pub fn read_request<R: Read>(reader: &mut BufReader<R>) -> Result<HashMap<String
             break; // EOF
         }
 
-        // Trim trailing newline
+        // Trim trailing newline (Unix domain socket, always \n)
         if buf.ends_with('\n') {
             buf.pop();
-        }
-        if buf.ends_with('\r') {
-            buf.pop();
-        }
-
-        // Skip blank lines
-        if buf.is_empty() {
-            continue;
         }
 
         // Parse key=length: from the buffer, producing owned values
@@ -161,11 +82,8 @@ pub fn read_request<R: Read>(reader: &mut BufReader<R>) -> Result<HashMap<String
                 if n == 0 {
                     return Err(ReadError::Parse(ParseError::UnexpectedEof));
                 }
-                // Trim the trailing newline
+                // Trim trailing newline (Unix domain socket, always \n)
                 if buf.ends_with('\n') {
-                    buf.pop();
-                }
-                if buf.ends_with('\r') {
                     buf.pop();
                 }
                 let line_chars = buf.chars().count();
@@ -218,128 +136,8 @@ impl std::error::Error for ReadError {
 }
 
 #[cfg(test)]
-fn is_ws(c: char) -> bool {
-    c == ' ' || c == '\t' || c == '\n' || c == '\r'
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
-
-    fn parse(input: &str) -> HashMap<String, String> {
-        parse_request(input).unwrap()
-    }
-
-    #[test]
-    fn basic_request() {
-        let input = "ver=1:2\nlang=3:zsh\npwd=5:/home\nprebuffer=0:\nbuffer=10:echo hello\n";
-        let map = parse(input);
-        assert_eq!(map["ver"], "2");
-        assert_eq!(map["lang"], "zsh");
-        assert_eq!(map["pwd"], "/home");
-        assert_eq!(map["prebuffer"], "");
-        assert_eq!(map["buffer"], "echo hello");
-    }
-
-    #[test]
-    fn empty_value() {
-        let input = "prebuffer=0:\n";
-        let map = parse(input);
-        assert_eq!(map["prebuffer"], "");
-    }
-
-    #[test]
-    fn spaces_in_value() {
-        let input = "buffer=10:echo hello\n";
-        let map = parse(input);
-        assert_eq!(map["buffer"], "echo hello");
-    }
-
-    #[test]
-    fn newline_in_value() {
-        // "foo\nbar" = 7 chars
-        let input = "buffer=7:foo\nbar\n";
-        let map = parse(input);
-        assert_eq!(map["buffer"], "foo\nbar");
-    }
-
-    #[test]
-    fn embedded_quotes_and_special_chars() {
-        // "it's here" = 9 chars
-        let input = "buffer=9:it's here\n";
-        let map = parse(input);
-        assert_eq!(map["buffer"], "it's here");
-    }
-
-    #[test]
-    fn path_value() {
-        let input = "pwd=29:/Users/nilton/tmp/shell-words\n";
-        let map = parse(input);
-        assert_eq!(map["pwd"], "/Users/nilton/tmp/shell-words");
-    }
-
-    #[test]
-    fn key_order_does_not_matter() {
-        let input = "buffer=4:echo\nver=1:2\nlang=3:zsh\n";
-        let map = parse(input);
-        assert_eq!(map["buffer"], "echo");
-        assert_eq!(map["ver"], "2");
-        assert_eq!(map["lang"], "zsh");
-    }
-
-    #[test]
-    fn value_with_newlines_and_quotes() {
-        // "foo\nbar'baz z\"zzz" = 17 chars
-        let input = "buffer=17:foo\nbar'baz z\"zzz\n";
-        let map = parse(input);
-        assert_eq!(map["buffer"], "foo\nbar'baz z\"zzz");
-    }
-
-    #[test]
-    fn multiple_records_no_trailing_newline() {
-        let input = "ver=1:2\nbuffer=5:hello";
-        let map = parse(input);
-        assert_eq!(map["ver"], "2");
-        assert_eq!(map["buffer"], "hello");
-    }
-
-    #[test]
-    fn missing_equals() {
-        let input = "ver1:2\n";
-        assert!(parse_request(input).is_err());
-    }
-
-    #[test]
-    fn missing_colon() {
-        let input = "ver=12\n";
-        assert!(parse_request(input).is_err());
-    }
-
-    #[test]
-    fn invalid_length() {
-        let input = "ver=abc:2\n";
-        assert!(parse_request(input).is_err());
-    }
-
-    #[test]
-    fn truncated_value() {
-        let input = "buffer=10:hi\n";
-        assert!(parse_request(input).is_err());
-    }
-
-    #[test]
-    fn empty_input() {
-        let map = parse("");
-        assert!(map.is_empty());
-    }
-
-    #[test]
-    fn whitespace_only_input() {
-        let map = parse("  \n  \n");
-        assert!(map.is_empty());
-    }
-
-    // --- Streaming read_request tests ---
 
     fn read(input: &str) -> HashMap<String, String> {
         let mut reader = BufReader::new(input.as_bytes());
@@ -347,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn streaming_basic_request() {
+    fn basic_request() {
         let input = "ver=1:2\nlang=3:zsh\npwd=5:/home\nprebuffer=0:\nbuffer=10:echo hello\nEOM=0:\n";
         let map = read(input);
         assert_eq!(map["ver"], "2");
@@ -358,31 +156,98 @@ mod tests {
     }
 
     #[test]
-    fn streaming_multiline_value() {
+    fn empty_value() {
+        let input = "prebuffer=0:\nEOM=0:\n";
+        let map = read(input);
+        assert_eq!(map["prebuffer"], "");
+    }
+
+    #[test]
+    fn spaces_in_value() {
+        let input = "buffer=10:echo hello\nEOM=0:\n";
+        let map = read(input);
+        assert_eq!(map["buffer"], "echo hello");
+    }
+
+    #[test]
+    fn newline_in_value() {
         // "foo\nbar" = 7 chars
-        let input = "ver=1:2\nbuffer=7:foo\nbar\nEOM=0:\n";
+        let input = "buffer=7:foo\nbar\nEOM=0:\n";
         let map = read(input);
         assert_eq!(map["buffer"], "foo\nbar");
     }
 
     #[test]
-    fn streaming_empty_prebuffer() {
-        let input = "ver=1:2\nprebuffer=0:\nbuffer=4:echo\nEOM=0:\n";
+    fn embedded_quotes_and_special_chars() {
+        // "it's here" = 9 chars
+        let input = "buffer=9:it's here\nEOM=0:\n";
         let map = read(input);
-        assert_eq!(map["prebuffer"], "");
-        assert_eq!(map["buffer"], "echo");
+        assert_eq!(map["buffer"], "it's here");
     }
 
     #[test]
-    fn streaming_complex_value() {
+    fn path_value() {
+        let input = "pwd=29:/Users/nilton/tmp/shell-words\nEOM=0:\n";
+        let map = read(input);
+        assert_eq!(map["pwd"], "/Users/nilton/tmp/shell-words");
+    }
+
+    #[test]
+    fn key_order_does_not_matter() {
+        let input = "buffer=4:echo\nver=1:2\nlang=3:zsh\nEOM=0:\n";
+        let map = read(input);
+        assert_eq!(map["buffer"], "echo");
+        assert_eq!(map["ver"], "2");
+        assert_eq!(map["lang"], "zsh");
+    }
+
+    #[test]
+    fn value_with_newlines_and_quotes() {
         // "foo\nbar'baz z\"zzz" = 17 chars
-        let input = "ver=1:2\nbuffer=17:foo\nbar'baz z\"zzz\nEOM=0:\n";
+        let input = "buffer=17:foo\nbar'baz z\"zzz\nEOM=0:\n";
         let map = read(input);
         assert_eq!(map["buffer"], "foo\nbar'baz z\"zzz");
     }
 
     #[test]
-    fn streaming_eom_is_terminator() {
+    fn missing_equals() {
+        let input = "ver1:2\nEOM=0:\n";
+        assert!(read_request(&mut BufReader::new(input.as_bytes())).is_err());
+    }
+
+    #[test]
+    fn missing_colon() {
+        let input = "ver=12\nEOM=0:\n";
+        assert!(read_request(&mut BufReader::new(input.as_bytes())).is_err());
+    }
+
+    #[test]
+    fn invalid_length() {
+        let input = "ver=abc:2\nEOM=0:\n";
+        assert!(read_request(&mut BufReader::new(input.as_bytes())).is_err());
+    }
+
+    #[test]
+    fn truncated_value_consumes_next_record() {
+        // A truncated value (length > actual chars) will consume subsequent
+        // records as value content. This is inherent to the length-prefixed
+        // format — the parser can't distinguish value content from records.
+        // The client is responsible for sending correct lengths.
+        let input = "buffer=10:hi\nEOM=0:\n";
+        let map = read(input);
+        // "hi" (2) + "\n" (1) + "EOM=0:" (6) + "\n" (1) = 10 chars
+        assert_eq!(map["buffer"], "hi\nEOM=0:\n");
+        // EOM was consumed as value content, so the reader hits EOF and returns Ok
+    }
+
+    #[test]
+    fn empty_input() {
+        let map = read("");
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn eom_is_terminator() {
         // After seeing EOM, the reader stops even if there's more data
         let input = "ver=1:2\nbuffer=4:echo\nEOM=0:\nextra=4:data\n";
         let map = read(input);
@@ -390,5 +255,24 @@ mod tests {
         assert_eq!(map["ver"], "2");
         assert_eq!(map["buffer"], "echo");
         assert!(!map.contains_key("extra"));
+    }
+
+    #[test]
+    fn blank_line_between_records_is_rejected() {
+        // A blank line between records is malformed, not silently skipped.
+        // Before the fix, the blank line was swallowed and the parser would
+        // return Ok with whatever it had collected so far.
+        let input = "ver=1:2\n\nbuffer=4:echo\nEOM=0:\n";
+        assert!(read_request(&mut BufReader::new(input.as_bytes())).is_err());
+    }
+
+    #[test]
+    fn blank_line_within_value_is_preserved() {
+        // "foo\n\nbar\n" = 9 chars — two consecutive newlines inside the value,
+        // plus a trailing newline. The inner collector must preserve blank lines
+        // as actual value content, not skip them.
+        let input = "buffer=9:foo\n\nbar\nEOM=0:\n";
+        let map = read(input);
+        assert_eq!(map["buffer"], "foo\n\nbar\n");
     }
 }
