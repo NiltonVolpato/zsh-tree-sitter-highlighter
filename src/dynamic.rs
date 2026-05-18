@@ -429,6 +429,32 @@ mod tests {
         );
     }
 
+    /// Regression test: bare relative paths (e.g. "foo/bar") must be resolved
+    /// against the provided pwd. If the `path.contains('/') && pwd.is_some()`
+    /// branch in `real_resolve_path` were removed, this test would fail.
+    #[test]
+    fn dynamic_existing_path_bare_relative() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("sub");
+        std::fs::create_dir(&subdir).unwrap();
+        std::fs::write(subdir.join("file.txt"), "hello").unwrap();
+
+        let pwd = dir.path().to_str().unwrap().to_string();
+        let resolve_fn = real_resolve_path(Some(pwd));
+
+        // "sub/file.txt" is a bare relative path (no ./ prefix, no leading /)
+        let result = resolve_fn("sub/file.txt");
+        assert_eq!(result, Some(PathType::File), "bare relative path should resolve against pwd");
+
+        // "sub/" should resolve as a directory
+        let result = resolve_fn("sub/");
+        assert_eq!(result, Some(PathType::Directory), "bare relative dir path should resolve against pwd");
+
+        // A non-existent bare relative path should return None
+        let result = resolve_fn("sub/nope.txt");
+        assert_eq!(result, None, "non-existent bare relative path should return None");
+    }
+
     #[test]
     fn blend_overlapping_base_picks_most_specific() {
         // Simulates: string [5..28] containing embedded [6..27] containing command [8..11]

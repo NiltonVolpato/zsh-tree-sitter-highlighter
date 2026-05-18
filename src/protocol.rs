@@ -275,4 +275,31 @@ mod tests {
         let map = read(input);
         assert_eq!(map["buffer"], "foo\n\nbar\n");
     }
+
+    /// Regression test: multi-byte (UTF-8) characters must be counted by
+    /// char, not by byte. If `.chars().count()` regressed to `.len()`, the
+    /// parser would read too few bytes and fail to reconstruct the value.
+    #[test]
+    fn multibyte_value_char_counting() {
+        // "café" = 4 chars, 5 bytes (é = 0xC3 0xA9)
+        let input = "buffer=4:café\nEOM=0:\n";
+        let map = read(input);
+        assert_eq!(map["buffer"], "café");
+    }
+
+    #[test]
+    fn multibyte_value_across_lines() {
+        // "αβ\nγδ" = 5 chars (α=2 bytes, β=2 bytes, \n=1 byte, γ=2 bytes, δ=2 bytes)
+        let input = "buffer=5:αβ\nγδ\nEOM=0:\n";
+        let map = read(input);
+        assert_eq!(map["buffer"], "αβ\nγδ");
+    }
+
+    #[test]
+    fn multibyte_emoji_value() {
+        // "🎉🚀" = 2 chars, 8 bytes
+        let input = "buffer=2:🎉🚀\nEOM=0:\n";
+        let map = read(input);
+        assert_eq!(map["buffer"], "🎉🚀");
+    }
 }

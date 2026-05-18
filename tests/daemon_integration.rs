@@ -229,6 +229,51 @@ expect eof
     );
 }
 
+/// Regression test: multi-byte characters in buffer/prebuffer must be counted
+/// by char, not by byte. If `send_request` regressed from `.chars().count()` to
+/// `.len()`, the daemon would receive a wrong length and fail to parse the request.
+#[test]
+fn test_daemon_multibyte_buffer() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("daemon.sock");
+    let mut child = start_daemon_in(dir.path());
+
+    assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
+
+    // "café" = 4 chars, 5 bytes — if counted by .len() the daemon would get length=5
+    // and read too many bytes, breaking the protocol
+    let responses = send_request(&socket, "2", "zsh", "/tmp", "", "echo café");
+    assert!(!responses.is_empty(), "expected at least one span for multibyte buffer");
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Regression test: multi-byte characters in the prebuffer must be counted by
+/// char. The daemon shifts span offsets by `prebuffer.chars().count()`. If that
+/// regressed to `.len()`, the offsets would be wrong for multi-byte prebuffer
+/// content.
+#[test]
+fn test_daemon_multibyte_prebuffer() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("daemon.sock");
+    let mut child = start_daemon_in(dir.path());
+
+    assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
+
+    // prebuffer "café" = 4 chars (5 bytes), buffer "echo hello"
+    let responses = send_request(&socket, "2", "zsh", "/tmp", "café", "echo hello");
+    assert!(!responses.is_empty(), "expected at least one span with multibyte prebuffer");
+    // The spans should be relative to the buffer, not the full source.
+    // "echo" in "echo hello" should start at offset 0 in the returned spans.
+    let first = &responses[0];
+    let parts: Vec<&str> = first.split_whitespace().collect();
+    assert_eq!(parts[0], "0", "first span should start at 0 (buffer-relative)");
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Verify that an error message is shown when the daemon is not running.
 /// Sources the integration script directly (skipping `activate` which would start a daemon).
 #[test]
