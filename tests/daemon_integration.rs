@@ -31,7 +31,14 @@ fn wait_for_socket(socket: &Path, timeout_ms: u64) -> bool {
     false
 }
 
-fn send_request(socket: &Path, ver: &str, lang: &str, pwd: &str, prebuffer: &str, buffer: &str) -> Vec<String> {
+fn send_request(
+    socket: &Path,
+    ver: &str,
+    lang: &str,
+    pwd: &str,
+    prebuffer: &str,
+    buffer: &str,
+) -> Vec<String> {
     let mut stream = UnixStream::connect(socket).expect("connect failed");
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -55,11 +62,15 @@ fn send_request(socket: &Path, ver: &str, lang: &str, pwd: &str, prebuffer: &str
     // Read response: byte_length + '\n' + exactly byte_length bytes
     let mut reader = BufReader::new(&stream);
     let mut length_line = String::new();
-    reader.read_line(&mut length_line).expect("read length line");
+    reader
+        .read_line(&mut length_line)
+        .expect("read length line");
     let byte_length: usize = length_line.trim().parse().expect("parse byte length");
 
     let mut response_buf = vec![0u8; byte_length];
-    reader.read_exact(&mut response_buf).expect("read response bytes");
+    reader
+        .read_exact(&mut response_buf)
+        .expect("read response bytes");
 
     let response: Response = bt_bencode::from_slice(&response_buf).expect("deserialize response");
     if response.regions.is_empty() {
@@ -108,6 +119,8 @@ struct ZshResult {
     success: bool,
     /// The full script that was executed.
     script: String,
+    /// Runtime dir used for this test (for normalizing paths in assertions).
+    runtime_dir: Option<PathBuf>,
 }
 
 /// Start a daemon in a temp dir and return the guard + runtime dir path.
@@ -115,7 +128,10 @@ fn start_daemon() -> (DaemonGuard, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("daemon.sock");
     let child = start_daemon_in(dir.path());
-    assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
+    assert!(
+        wait_for_socket(&socket, 3000),
+        "daemon did not create socket in time"
+    );
     let guard = DaemonGuard { child, dir };
     let runtime_dir = guard.dir.path().to_path_buf();
     (guard, runtime_dir)
@@ -154,14 +170,18 @@ fn run_zsh_with_daemon_extra(daemon_dir: &Path, extra_env: &str, test_body: &str
         zsh_setup_script(daemon_dir, extra_env),
         test_body,
     );
-    run_zsh_script(&script)
+    let mut result = run_zsh_script(&script);
+    result.runtime_dir = Some(daemon_dir.to_path_buf());
+    result
 }
 
 /// Run a zsh subprocess without a daemon (for error-path tests).
 fn run_zsh_without_daemon(test_body: &str) -> ZshResult {
     let dir = tempfile::tempdir().unwrap();
     let runtime_dir = dir.path().to_path_buf();
-    run_zsh_with_daemon_extra(&runtime_dir, "", test_body)
+    let mut result = run_zsh_with_daemon_extra(&runtime_dir, "", test_body);
+    result.runtime_dir = Some(runtime_dir);
+    result
 }
 
 /// Execute a zsh script and capture output.
@@ -183,29 +203,48 @@ fn run_zsh_script(script: &str) -> ZshResult {
         stderr,
         success: result.status.success(),
         script: script.to_owned(),
+        runtime_dir: None,
     }
 }
 
 /// Comprehensive assertion helper for zsh subprocess tests.
-/// On failure prints the full script, stdout, stderr, and diffs.
-fn assert_zsh_result(result: &ZshResult, expected_rh: &str, expected_zle: Option<&str>) {
+///
+/// IMPORTANT: This helper compares the **exact full output**, not substrings.
+/// All callers must specify the complete expected `region_highlight` line and
+/// the complete expected `output_before` content. This ensures tests catch
+/// any unexpected extra output (e.g. spurious error messages, missing entries,
+/// or extra ZLE calls) that substring matching would silently ignore.
+fn assert_zsh_result(result: &ZshResult, expected_rh: &str, expected_output_before: &str) {
     let mut errors = Vec::new();
 
     if !result.success {
-        errors.push(format!("zsh exited with non-zero status\nstderr:\n{}", result.stderr));
+        errors.push(format!(
+            "zsh exited with non-zero status\nstderr:\n{}",
+            result.stderr
+        ));
     }
 
-    if let Some(expected) = expected_zle {
-        if !result.output_before.contains(expected) {
-            errors.push(format!(
-                "expected ZLE output containing {:?}, got:\n{}",
-                expected, result.output_before
-            ));
-        }
-    } else if !result.output_before.is_empty() {
+    // Normalize variable paths (temp dirs) to "TMPDIR" so exact matching
+    // works across different test runs without hardcoding paths.
+    let (actual_before, expected_before) = if let Some(ref dir) = result.runtime_dir {
+        let dir_str = dir.to_str().unwrap_or("");
+        (
+            result.output_before.replace(dir_str, "TMPDIR"),
+            expected_output_before
+                .replace("TMPDIR", dir_str)
+                .replace(dir_str, "TMPDIR"),
+        )
+    } else {
+        (
+            result.output_before.clone(),
+            expected_output_before.to_owned(),
+        )
+    };
+
+    if actual_before != expected_before {
         errors.push(format!(
-            "expected no ZLE output, got:\n{}",
-            result.output_before
+            "output_before mismatch.\nexpected:\n  {:?}\nactual:\n  {:?}",
+            expected_before, actual_before
         ));
     }
 
@@ -234,7 +273,10 @@ fn test_daemon_highlight_zsh() {
     let socket = dir.path().join("daemon.sock");
     let mut child = start_daemon_in(dir.path());
 
-    assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
+    assert!(
+        wait_for_socket(&socket, 3000),
+        "daemon did not create socket in time"
+    );
 
     let responses = send_request(&socket, "2", "zsh", "/tmp", "", "echo hello");
     assert!(!responses.is_empty(), "expected at least one span");
@@ -254,10 +296,16 @@ fn test_daemon_highlight_markdown() {
     let socket = dir.path().join("daemon.sock");
     let mut child = start_daemon_in(dir.path());
 
-    assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
+    assert!(
+        wait_for_socket(&socket, 3000),
+        "daemon did not create socket in time"
+    );
 
     let responses = send_request(&socket, "2", "md", "/tmp", "", "# Hello");
-    assert!(!responses.is_empty(), "expected at least one span for markdown heading");
+    assert!(
+        !responses.is_empty(),
+        "expected at least one span for markdown heading"
+    );
     let first = &responses[0];
     let parts: Vec<&str> = first.split_whitespace().collect();
     assert_eq!(parts.len(), 3);
@@ -330,7 +378,11 @@ fn test_activate_renders_valid_zsh_script() {
     }
 
     let output = child.wait_with_output().expect("failed to wait for zsh");
-    assert!(output.status.success(), "zsh -n failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "zsh -n failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// End-to-end test: activate the highlighter in a real zsh with a PTY (via expect),
@@ -341,7 +393,10 @@ fn test_highlighting_works_in_zsh() {
     let socket = dir.path().join("daemon.sock");
     let mut daemon = start_daemon_in(dir.path());
 
-    assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
+    assert!(
+        wait_for_socket(&socket, 3000),
+        "daemon did not create socket in time"
+    );
 
     let exe = exe_path();
     let runtime_dir_str = dir.path().to_str().unwrap();
@@ -396,12 +451,18 @@ fn test_daemon_multibyte_buffer() {
     let socket = dir.path().join("daemon.sock");
     let mut child = start_daemon_in(dir.path());
 
-    assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
+    assert!(
+        wait_for_socket(&socket, 3000),
+        "daemon did not create socket in time"
+    );
 
     // "café" = 4 chars, 5 bytes — if counted by .len() the daemon would get length=5
     // and read too many bytes, breaking the protocol
     let responses = send_request(&socket, "2", "zsh", "/tmp", "", "echo café");
-    assert!(!responses.is_empty(), "expected at least one span for multibyte buffer");
+    assert!(
+        !responses.is_empty(),
+        "expected at least one span for multibyte buffer"
+    );
 
     let _ = child.kill();
     let _ = child.wait();
@@ -417,16 +478,25 @@ fn test_daemon_multibyte_prebuffer() {
     let socket = dir.path().join("daemon.sock");
     let mut child = start_daemon_in(dir.path());
 
-    assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
+    assert!(
+        wait_for_socket(&socket, 3000),
+        "daemon did not create socket in time"
+    );
 
     // prebuffer "café" = 4 chars (5 bytes), buffer "echo hello"
     let responses = send_request(&socket, "2", "zsh", "/tmp", "café", "echo hello");
-    assert!(!responses.is_empty(), "expected at least one span with multibyte prebuffer");
+    assert!(
+        !responses.is_empty(),
+        "expected at least one span with multibyte prebuffer"
+    );
     // The spans should be relative to the buffer, not the full source.
     // "echo" in "echo hello" should start at offset 0 in the returned spans.
     let first = &responses[0];
     let parts: Vec<&str> = first.split_whitespace().collect();
-    assert_eq!(parts[0], "0", "first span should start at 0 (buffer-relative)");
+    assert_eq!(
+        parts[0], "0",
+        "first span should start at 0 (buffer-relative)"
+    );
 
     let _ = child.kill();
     let _ = child.wait();
@@ -439,8 +509,8 @@ fn test_error_message_when_daemon_down() {
     let dir = tempfile::tempdir().unwrap();
     let exe = exe_path();
     let runtime_dir_str = dir.path().to_str().unwrap();
-    let template_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("templates/zsh-integration.zsh");
+    let template_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("templates/zsh-integration.zsh");
 
     let expect_script = format!(
         r#"
@@ -491,32 +561,57 @@ expect eof
 #[test]
 fn test_zsh_echo_hello() {
     let (_guard, dir) = start_daemon();
-    let result = run_zsh_with_daemon(&dir, r#"
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
 region_highlight=()
 BUFFER="echo hello"
 PREBUFFER=""
 _zsh_ts_highlighter
-"#);
+"#,
+    );
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
-        None,
+        "",
     );
+}
+
+/// Markdown mode: plain text "Hello." has no markdown syntax, so the daemon
+/// returns no spans. Verifies that ZSH_TS_HIGHLIGHTER_MODE is propagated through
+/// the template to the daemon and that empty responses don't produce bogus entries.
+#[test]
+fn test_zsh_markdown_plain_text() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon_extra(
+        &dir,
+        "export ZSH_TS_HIGHLIGHTER_MODE=md",
+        r#"
+region_highlight=()
+BUFFER="Hello."
+PREBUFFER=""
+_zsh_ts_highlighter
+"#,
+    );
+    assert_zsh_result(&result, "typeset -a region_highlight=(  )", "");
 }
 
 #[test]
 fn test_zsh_echo_quoted_foo() {
     let (_guard, dir) = start_daemon();
-    let result = run_zsh_with_daemon(&dir, r#"
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
 region_highlight=()
 BUFFER='echo "foo"'
 PREBUFFER=""
 _zsh_ts_highlighter
-"#);
+"#,
+    );
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' '5 10 fg=#e0af68 memo=zsh_ts_highlighter' )",
-        None,
+        "",
     );
 }
 
@@ -526,16 +621,19 @@ fn test_zsh_multibyte_buffer() {
     // echo "café" — the quoted string "café" is 6 chars (", c, a, f, é, ").
     // If char counting regressed to byte counting, é would be 2 bytes and the
     // span [5..11] for the string would be wrong.
-    let result = run_zsh_with_daemon(&dir, r#"
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
 region_highlight=()
 BUFFER='echo "café"'
 PREBUFFER=""
 _zsh_ts_highlighter
-"#);
+"#,
+    );
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' '5 11 fg=#e0af68 memo=zsh_ts_highlighter' )",
-        None,
+        "",
     );
 }
 
@@ -546,115 +644,131 @@ fn test_zsh_multibyte_prebuffer() {
     // Full source: "abcéecho hello" → parsed as command "abcéecho" [0..8] + arg "hello".
     // The daemon shifts spans by prebuffer_char_len=4, producing buffer-relative span [0..4].
     // If char counting regressed to byte counting (5), the span would be [0..3] instead.
-    let result = run_zsh_with_daemon(&dir, r#"
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
 region_highlight=()
 BUFFER="echo hello"
 PREBUFFER="abcé"
 _zsh_ts_highlighter
-"#
+"#,
     );
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=( '0 4 fg=#f7768e memo=zsh_ts_highlighter' )",
-        None,
+        "",
     );
 }
 
 #[test]
 fn test_zsh_path_underline() {
     let (_guard, dir) = start_daemon();
-    let result = run_zsh_with_daemon(&dir, r#"
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
 region_highlight=()
 BUFFER="cat /etc/passwd"
 PREBUFFER=""
 PWD="/"
 _zsh_ts_highlighter
-"#);
+"#,
+    );
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=( '0 3 fg=#7aa2f7 memo=zsh_ts_highlighter' '4 15 underline memo=zsh_ts_highlighter' )",
-        None,
+        "",
     );
 }
 
 #[test]
 fn test_zsh_empty_buffer() {
     let (_guard, dir) = start_daemon();
-    let result = run_zsh_with_daemon(&dir, r#"
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
 region_highlight=()
 BUFFER=""
 PREBUFFER=""
 _zsh_ts_highlighter
-"#);
-    assert_zsh_result(
-        &result,
-        "typeset -a region_highlight=(  )",
-        None,
+"#,
     );
+    assert_zsh_result(&result, "typeset -a region_highlight=(  )", "");
 }
 
 #[test]
 fn test_zsh_memo_filtering_preserves_other() {
     let (_guard, dir) = start_daemon();
-    let result = run_zsh_with_daemon(&dir, r#"
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
 region_highlight=("0 10 some_other_plugin")
 BUFFER="echo hello"
 PREBUFFER=""
 _zsh_ts_highlighter
-"#);
+"#,
+    );
     // The other_plugin entry should be preserved; our memo entry is added.
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=( '0 10 some_other_plugin' '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
-        None,
+        "",
     );
 }
 
 #[test]
 fn test_zsh_memo_filtering_removes_old_memo() {
     let (_guard, dir) = start_daemon();
-    let result = run_zsh_with_daemon(&dir, r#"
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
 region_highlight=("0 10 some_other_plugin" "0 4 fg=#7aa2f7 memo=zsh_ts_highlighter")
 BUFFER="ls /tmp"
 PREBUFFER=""
 PWD="/"
 _zsh_ts_highlighter
-"#);
+"#,
+    );
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=( '0 10 some_other_plugin' '0 2 fg=#7aa2f7 memo=zsh_ts_highlighter' '3 7 fg=#7aa2f7,underline memo=zsh_ts_highlighter' )",
-        None,
+        "",
     );
 }
 
 #[test]
 fn test_zsh_daemon_socket_not_found() {
-    let result = run_zsh_without_daemon(r#"
+    let result = run_zsh_without_daemon(
+        r#"
 region_highlight=()
 BUFFER="echo hello"
 PREBUFFER=""
 _zsh_ts_highlighter
-"#);
+"#,
+    );
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=(  )",
-        Some("daemon socket not found"),
+        "ZLE '-M' 'zsh-tree-sitter-highlighter: daemon socket not found at TMPDIR/daemon.sock'\n",
     );
 }
 
 #[test]
 fn test_zsh_version_unset() {
     let (_guard, dir) = start_daemon();
-    let result = run_zsh_with_daemon_extra(&dir, "unset _ZSH_TS_HIGHLIGHTER_VERSION", r#"
+    let result = run_zsh_with_daemon_extra(
+        &dir,
+        "unset _ZSH_TS_HIGHLIGHTER_VERSION",
+        r#"
 region_highlight=()
 BUFFER="echo hello"
 PREBUFFER=""
 _zsh_ts_highlighter
-"#);
+"#,
+    );
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=(  )",
-        Some("_ZSH_TS_HIGHLIGHTER_VERSION not set"),
+        "ZLE '-M' 'zsh-tree-sitter-highlighter: _ZSH_TS_HIGHLIGHTER_VERSION not set, activation may have failed'\n",
     );
 }
 
@@ -665,15 +779,18 @@ _zsh_ts_highlighter
 #[test]
 fn test_zsh_buffer_ending_with_newline() {
     let (_guard, dir) = start_daemon();
-    let result = run_zsh_with_daemon(&dir, r#"
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
 region_highlight=()
 BUFFER=$'echo hello\n'
 PREBUFFER=""
 _zsh_ts_highlighter
-"#);
+"#,
+    );
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
-        None,
+        "",
     );
 }

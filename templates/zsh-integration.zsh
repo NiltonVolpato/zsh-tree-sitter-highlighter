@@ -109,16 +109,12 @@ _zsh_ts_highlighter() {
 
     local -a new_regions=()
     for region in "${(@f)BENCODE_MSG[regions]}"; do
-        new_regions+=("$region memo=zsh_ts_highlighter")
+        [[ -n "$region" ]] && new_regions+=("$region memo=zsh_ts_highlighter")
     done
 
     exec {fd}>&-
 
     region_highlight+=("${new_regions[@]}")
-
-    if [[ -z "${new_regions[@]}" ]]; then
-        zle -M "zsh-tree-sitter-highlighter: daemon returned no highlights (version mismatch?)"
-    fi
 }
 
 if ! zmodload zsh/net/socket 2>/dev/null; then
