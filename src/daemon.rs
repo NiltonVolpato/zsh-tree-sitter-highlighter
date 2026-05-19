@@ -56,8 +56,8 @@ fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Re
     // `deserializer.end()` — that would fail because the socket still has unread
     // bytes (the client is waiting for our response on the same stream).
     let mut deserializer = bt_bencode::Deserializer::from_reader(&stream);
-    let request = Request::deserialize(&mut deserializer)
-        .context("unable to deserialize bencode request")?;
+    let request =
+        Request::deserialize(&mut deserializer).context("unable to deserialize bencode request")?;
 
     // Verify protocol version
     if request.version != PROTOCOL_VERSION {
@@ -102,8 +102,8 @@ fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Re
     let response = Response {
         regions: regions.join("\n"),
     };
-    let response_bytes = bt_bencode::to_vec(&response)
-        .context("unable to serialize bencode response")?;
+    let response_bytes =
+        bt_bencode::to_vec(&response).context("unable to serialize bencode response")?;
 
     // The zsh client expects: byte_length + '\n' + exactly byte_length bytes
     stream
@@ -120,14 +120,23 @@ pub fn activate(runtime_dir: &Path) -> Result<()> {
     let (role, _already_running) = start_daemon_internal(runtime_dir, false)?;
     if role == Role::Parent {
         let exe = std::env::current_exe()?;
-        let runtime_dir_str = runtime_dir
-            .to_str()
-            .unwrap()
-            .trim_end_matches('/');
+        let runtime_dir_str = runtime_dir.to_str().unwrap().trim_end_matches('/');
         let mut s = stdout().lock();
-        writeln!(s, "export _ZSH_TS_HIGHLIGHTER_PATH={:?}", exe.to_str().unwrap())?;
-        writeln!(s, "export _ZSH_TS_HIGHLIGHTER_RUNTIME_DIR={:?}", runtime_dir_str)?;
-        writeln!(s, "export _ZSH_TS_HIGHLIGHTER_VERSION={:?}", PROTOCOL_VERSION)?;
+        writeln!(
+            s,
+            "export _ZSH_TS_HIGHLIGHTER_PATH={:?}",
+            exe.to_str().unwrap()
+        )?;
+        writeln!(
+            s,
+            "export _ZSH_TS_HIGHLIGHTER_RUNTIME_DIR={:?}",
+            runtime_dir_str
+        )?;
+        writeln!(
+            s,
+            "export _ZSH_TS_HIGHLIGHTER_VERSION={:?}",
+            PROTOCOL_VERSION
+        )?;
         s.write_all(ACTIVATE_SCRIPT.as_bytes())?;
         s.flush()?;
     }

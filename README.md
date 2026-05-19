@@ -33,7 +33,7 @@ This starts the daemon (if not running) and registers a ZLE hook for `line-pre-r
 
 ## Environment Variables
 
-- `FORGE_PROMPT_LANG`: Controls the language mode. Set to `zsh` (default) or `md`/`markdown` to switch prompt highlighting.
+- `ZSH_TS_HIGHLIGHTER_MODE`: Controls the language mode. Set to `zsh` (default) or `md`/`markdown` to switch prompt highlighting.
 
 ## CLI Commands
 

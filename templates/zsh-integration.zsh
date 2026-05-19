@@ -77,7 +77,7 @@ _zsh_ts_highlighter() {
     fi
     local fd=$REPLY
 
-    local mode="${FORGE_PROMPT_LANG:-zsh}"
+    local mode="${ZSH_TS_HIGHLIGHTER_MODE:-zsh}"
 
     if [[ -z "$_ZSH_TS_HIGHLIGHTER_VERSION" ]]; then
         zle -M "zsh-tree-sitter-highlighter: _ZSH_TS_HIGHLIGHTER_VERSION not set, activation may have failed"
