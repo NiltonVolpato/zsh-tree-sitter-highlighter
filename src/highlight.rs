@@ -2,8 +2,7 @@ use anyhow::{Context, Result};
 use tree_sitter::StreamingIterator;
 use tree_sitter_highlight::HighlightConfiguration;
 
-use crate::dynamic::{LookupEnv, blend_spans, dynamic_highlight_zsh};
-use crate::theme::Theme;
+use crate::dynamic::{LookupEnv, dynamic_highlight_zsh};
 
 /// A highlighted span with character (not byte) offsets.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,17 +32,13 @@ pub enum LanguageConfig {
 /// Holds the pre-configured highlight configurations for each language.
 pub struct HighlightEngine {
     zsh_query: tree_sitter::Query,
-    zsh_capture_map: Vec<Option<usize>>,
     md_block_config: HighlightConfiguration,
     md_inline_config: HighlightConfiguration,
-    md_block_capture_map: Vec<Option<usize>>,
-    md_inline_capture_map: Vec<Option<usize>>,
-    theme: Theme,
     dynamic_env: Option<LookupEnv>,
 }
 
 impl HighlightEngine {
-    pub fn new(theme: Theme) -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let zsh_lang: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
         let md_lang: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
         let md_inline_lang: tree_sitter::Language = tree_sitter_md::INLINE_LANGUAGE.into();
@@ -69,30 +64,31 @@ impl HighlightEngine {
         )
         .context("failed to create markdown inline highlight configuration")?;
 
-        let names: Vec<&str> = theme.names().iter().map(|s| s.as_str()).collect();
-        md_block_config.configure(&names);
-        md_inline_config.configure(&names);
-
-        let zsh_capture_map = build_capture_map(zsh_query.capture_names(), theme.names());
-        let md_block_capture_map = build_capture_map(md_block_config.names(), theme.names());
-        let md_inline_capture_map = build_capture_map(md_inline_config.names(), theme.names());
+        // Enable all captures so we can return semantic names directly.
+        // Use raw pointers to avoid borrow checker issues with capture_names() + configure().
+        let md_block_names = unsafe {
+            let query_ptr = &md_block_config.query as *const tree_sitter::Query;
+            (*query_ptr).capture_names().to_vec()
+        };
+        md_block_config.configure(&md_block_names);
+        let md_inline_names = unsafe {
+            let query_ptr = &md_inline_config.query as *const tree_sitter::Query;
+            (*query_ptr).capture_names().to_vec()
+        };
+        md_inline_config.configure(&md_inline_names);
 
         Ok(Self {
             zsh_query,
-            zsh_capture_map,
             md_block_config,
             md_inline_config,
-            md_block_capture_map,
-            md_inline_capture_map,
-            theme,
             dynamic_env: Some(LookupEnv::default()),
         })
     }
 
     /// Create an engine without dynamic highlighting (for tests).
     #[cfg(test)]
-    pub fn new_without_dynamic(theme: Theme) -> Result<Self> {
-        let mut engine = Self::new(theme)?;
+    pub fn new_without_dynamic() -> Result<Self> {
+        let mut engine = Self::new()?;
         engine.dynamic_env = None;
         Ok(engine)
     }
@@ -117,7 +113,10 @@ impl HighlightEngine {
                 LanguageConfig::Zsh => {
                     let (tree, static_spans) = self.highlight_zsh_static(source)?;
                     let dynamic_spans = dynamic_highlight_zsh(&tree, source, &env)?;
-                    Ok(blend_spans(static_spans, dynamic_spans))
+                    let mut all = dynamic_spans;
+                    all.extend(static_spans);
+                    all.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+                    Ok(all)
                 }
                 LanguageConfig::Markdown => self.highlight_markdown(source),
             }
@@ -131,7 +130,10 @@ impl HighlightEngine {
 
         if let Some(ref env) = self.dynamic_env {
             let dynamic_spans = dynamic_highlight_zsh(&tree, source, env)?;
-            Ok(blend_spans(static_spans, dynamic_spans))
+            let mut all = dynamic_spans;
+            all.extend(static_spans);
+            all.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+            Ok(all)
         } else {
             Ok(static_spans)
         }
@@ -158,12 +160,12 @@ impl HighlightEngine {
             captures.advance();
             if let Some((m, capture_idx)) = captures.get() {
                 let capture = m.captures[*capture_idx];
+                let capture_name = self.zsh_query.capture_names()[capture.index as usize];
                 if let Some(span) = self.capture_to_span(
-                    capture.index as usize,
+                    capture_name,
                     capture.node,
                     &byte_to_char,
                     char_len,
-                    &self.zsh_capture_map,
                 ) {
                     static_spans.push(span);
                 }
@@ -242,12 +244,12 @@ impl HighlightEngine {
                     if node.kind() == "code_fence_content" {
                         continue;
                     }
+                    let capture_name = self.md_block_config.names()[capture.index as usize];
                     if let Some(span) = self.capture_to_span(
-                        capture.index as usize,
+                        capture_name,
                         node,
                         &byte_to_char,
                         char_len,
-                        &self.md_block_capture_map,
                     ) {
                         spans.push(span);
                     }
@@ -273,12 +275,12 @@ impl HighlightEngine {
                     captures.advance();
                     if let Some((m, capture_idx)) = captures.get() {
                         let capture = m.captures[*capture_idx];
+                        let capture_name = self.md_inline_config.names()[capture.index as usize];
                         if let Some(span) = self.capture_to_span(
-                            capture.index as usize,
+                            capture_name,
                             capture.node,
                             &byte_to_char,
                             char_len,
-                            &self.md_inline_capture_map,
                         ) {
                             spans.push(span);
                         }
@@ -341,6 +343,7 @@ impl HighlightEngine {
                             if let Some((m, capture_idx)) = captures.get() {
                                 let capture = m.captures[*capture_idx];
                                 let node = capture.node;
+                                let capture_name = self.zsh_query.capture_names()[capture.index as usize];
                                 let start = node.start_byte();
                                 let end = node.end_byte();
                                 let source_len = code_byte_to_char.len().saturating_sub(1);
@@ -355,20 +358,11 @@ impl HighlightEngine {
                                     byte_to_char[(code_start + start).min(byte_to_char.len() - 1)];
                                 let doc_char_end =
                                     byte_to_char[(code_start + end).min(byte_to_char.len() - 1)];
-                                // Inline the theme lookup instead of calling capture_to_span,
-                                // because node byte offsets are local to the code block slice
-                                // while byte_to_char is the document-level table.
-                                let theme_idx = self.zsh_capture_map.get(capture.index as usize).copied().flatten();
-                                if let Some(theme_idx) = theme_idx {
-                                    if let Some(style) = self.theme.style_by_index(theme_idx) {
-                                        let ansi = style.to_ansi();
-                                        if !ansi.is_empty() {
-                                            spans.push(Span::new(
-                                                doc_char_start..doc_char_end,
-                                                ansi,
-                                            ));
-                                        }
-                                    }
+                                if capture_name != "none" {
+                                    spans.push(Span::new(
+                                        doc_char_start..doc_char_end,
+                                        capture_name.to_string(),
+                                    ));
                                 }
                             } else {
                                 break;
@@ -387,12 +381,15 @@ impl HighlightEngine {
 
     fn capture_to_span(
         &self,
-        capture_index: usize,
+        capture_name: &str,
         node: tree_sitter::Node,
         byte_to_char: &[usize],
         char_len: usize,
-        capture_map: &[Option<usize>],
     ) -> Option<Span> {
+        // Skip meta captures used for injection/language detection.
+        if capture_name == "none" || capture_name == "injection.content" || capture_name == "injection.language" {
+            return None;
+        }
         let source_len = byte_to_char.len().saturating_sub(1);
         let start = node.start_byte().min(source_len);
         let end = node.end_byte().min(source_len);
@@ -401,17 +398,8 @@ impl HighlightEngine {
         if char_start >= char_end {
             return None;
         }
-        let &theme_idx = capture_map.get(capture_index)?;
-        let theme_idx = theme_idx?;
-        let style = self.theme.style_by_index(theme_idx)?;
-        let ansi = style.to_ansi();
-        if ansi.is_empty() {
-            return None;
-        }
-        Some(Span::new(char_start..char_end, ansi))
+        Some(Span::new(char_start..char_end, capture_name.to_string()))
     }
-
-
 
     /// Returns every capture name referenced by the loaded queries.
     #[cfg(test)]
@@ -467,34 +455,6 @@ fn merge_spans(spans: Vec<Span>) -> Vec<Span> {
     merged
 }
 
-fn build_capture_map(query_names: &[&str], theme_names: &[String]) -> Vec<Option<usize>> {
-    query_names
-        .iter()
-        .map(|capture_name| {
-            let capture_parts: Vec<_> = capture_name.split('.').collect();
-            let mut best_index = None;
-            let mut best_match_len = 0;
-            for (i, theme_name) in theme_names.iter().enumerate() {
-                let theme_parts: Vec<_> = theme_name.split('.').collect();
-                let mut len = 0;
-                let mut matches = true;
-                for part in &theme_parts {
-                    len += 1;
-                    if !capture_parts.contains(part) {
-                        matches = false;
-                        break;
-                    }
-                }
-                if matches && len > best_match_len {
-                    best_index = Some(i);
-                    best_match_len = len;
-                }
-            }
-            best_index
-        })
-        .collect()
-}
-
 fn collect_nodes_by_kind<'a>(
     node: tree_sitter::Node<'a>,
     kind: &str,
@@ -513,7 +473,6 @@ fn collect_nodes_by_kind<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::tokyonight_dark;
     use googletest::prelude::*;
 
     #[test]
@@ -540,7 +499,7 @@ mod tests {
     }
 
     fn engine() -> HighlightEngine {
-        HighlightEngine::new_without_dynamic(tokyonight_dark()).unwrap()
+        HighlightEngine::new_without_dynamic().unwrap()
     }
 
     fn spans_to_segments(spans: &[Span], source: &str) -> Vec<(String, String)> {
@@ -573,35 +532,35 @@ mod tests {
 
     #[test]
     fn snapshot_zsh_echo_hello() {
-        assert_zsh_highlights("echo hello", &[("echo", "fg=#7aa2f7")]);
+        assert_zsh_highlights("echo hello", &[("echo", "function")]);
     }
 
     #[test]
     fn snapshot_zsh_combined_static_dynamic() {
-        let e = HighlightEngine::new(tokyonight_dark()).unwrap();
+        let e = HighlightEngine::new().unwrap();
         let spans = e.highlight(LanguageConfig::Zsh, "echo hello").unwrap();
         assert_that!(
             spans_to_segments(&spans, "echo hello"),
-            eq(&vec![("echo".into(), "fg=#7aa2f7".into())])
+            eq(&vec![("echo".into(), "function".into())])
         );
     }
 
     #[test]
     fn snapshot_zsh_comment() {
-        assert_zsh_highlights("# foo bar", &[("# foo bar", "fg=#565f89")]);
+        assert_zsh_highlights("# foo bar", &[("# foo bar", "comment")]);
     }
 
     #[test]
     fn snapshot_zsh_quoted_string() {
         assert_zsh_highlights(
             r#"echo "hello world""#,
-            &[("echo", "fg=#7aa2f7"), ("\"hello world\"", "fg=#e0af68")],
+            &[("echo", "function"), ("\"hello world\"", "string")],
         );
     }
 
     #[test]
     fn snapshot_zsh_variable() {
-        assert_zsh_highlights("echo $HOME", &[("echo", "fg=#7aa2f7")]);
+        assert_zsh_highlights("echo $HOME", &[("echo", "function")]);
     }
 
     #[test]
@@ -609,9 +568,9 @@ mod tests {
         assert_zsh_highlights(
             "echo $(date)",
             &[
-                ("echo", "fg=#7aa2f7"),
-                ("$(date)", "fg=#73daca"),
-                ("date", "fg=#7aa2f7"),
+                ("echo", "function"),
+                ("$(date)", "embedded"),
+                ("date", "function"),
             ],
         );
     }
@@ -621,10 +580,10 @@ mod tests {
         assert_zsh_highlights(
             "cat file | grep foo > out.txt",
             &[
-                ("cat", "fg=#7aa2f7"),
-                ("|", "fg=#7882bf"),
-                ("grep", "fg=#7aa2f7"),
-                (">", "fg=#7882bf"),
+                ("cat", "function"),
+                ("|", "operator"),
+                ("grep", "function"),
+                (">", "operator"),
             ],
         );
     }
@@ -633,7 +592,7 @@ mod tests {
     fn snapshot_md_heading() {
         assert_md_highlights(
             "# Hello\n",
-            &[("#", "fg=#ff9e64"), ("Hello", "fg=#7aa2f7,bold")],
+            &[("#", "punctuation.special"), ("Hello", "text.title")],
         );
     }
 
@@ -642,9 +601,9 @@ mod tests {
         assert_md_highlights(
             "**hello**\n",
             &[
-                ("**hello**", "bold"),
-                ("**", "fg=#7882bf"),
-                ("**", "fg=#7882bf"),
+                ("**hello**", "text.strong"),
+                ("**", "punctuation.delimiter"),
+                ("**", "punctuation.delimiter"),
             ],
         );
     }
@@ -654,9 +613,9 @@ mod tests {
         assert_md_highlights(
             "*hello*\n",
             &[
-                ("*hello*", "italic"),
-                ("*", "fg=#7882bf"),
-                ("*", "fg=#7882bf"),
+                ("*hello*", "text.emphasis"),
+                ("*", "punctuation.delimiter"),
+                ("*", "punctuation.delimiter"),
             ],
         );
     }
@@ -666,9 +625,9 @@ mod tests {
         assert_md_highlights(
             "use `cmd` here\n",
             &[
-                ("`cmd`", "fg=#e0af68"),
-                ("`", "fg=#7882bf"),
-                ("`", "fg=#7882bf"),
+                ("`cmd`", "text.literal"),
+                ("`", "punctuation.delimiter"),
+                ("`", "punctuation.delimiter"),
             ],
         );
     }
@@ -678,10 +637,10 @@ mod tests {
         assert_md_highlights(
             "```zsh\necho hi\n```\n",
             &[
-                ("```zsh\necho hi\n```\n", "fg=#e0af68"),
-                ("```", "fg=#7882bf"),
-                ("echo", "fg=#7aa2f7"),
-                ("```", "fg=#7882bf"),
+                ("```zsh\necho hi\n```\n", "text.literal"),
+                ("```", "punctuation.delimiter"),
+                ("echo", "function"),
+                ("```", "punctuation.delimiter"),
             ],
         );
     }
@@ -691,11 +650,11 @@ mod tests {
         assert_md_highlights(
             "[link](https://example.com)\n",
             &[
-                ("[", "fg=#7882bf"),
-                ("link", "fg=#1abc9c"),
-                ("](", "fg=#7882bf"),
-                ("https://example.com", "fg=#1abc9c,underline"),
-                (")", "fg=#7882bf"),
+                ("[", "punctuation.delimiter"),
+                ("link", "text.reference"),
+                ("](", "punctuation.delimiter"),
+                ("https://example.com", "text.uri"),
+                (")", "punctuation.delimiter"),
             ],
         );
     }
@@ -704,7 +663,7 @@ mod tests {
     fn snapshot_md_unordered_list() {
         assert_md_highlights(
             "- foo\n- bar\n",
-            &[("- ", "fg=#ff9e64"), ("- ", "fg=#ff9e64")],
+            &[("- ", "punctuation.special"), ("- ", "punctuation.special")],
         );
     }
 
@@ -712,7 +671,7 @@ mod tests {
     fn snapshot_md_task_list() {
         assert_md_highlights(
             "- [x] done\n- [ ] todo\n",
-            &[("- ", "fg=#ff9e64"), ("- ", "fg=#ff9e64")],
+            &[("- ", "punctuation.special"), ("- ", "punctuation.special")],
         );
     }
     #[test]
@@ -723,7 +682,7 @@ mod tests {
         // Should contain zsh-style highlighting inside the code block
         let segments = spans_to_segments(&spans, source);
         assert!(
-            segments.iter().any(|(text, style)| text == "echo" && style.contains("fg=#7aa2f7")),
+            segments.iter().any(|(text, style)| text == "echo" && style == "function"),
             "expected zsh-style span for 'echo', got: {:?}",
             segments
         );
@@ -733,17 +692,11 @@ mod tests {
     fn all_capture_names_have_theme_entries() {
         let e = engine();
         let names = e.all_capture_names();
-        let theme = tokyonight_dark();
-        let mut missing = Vec::new();
-        for name in &names {
-            let has_match = theme.names().iter().any(|tname| {
-                let parts: Vec<_> = tname.split('.').collect();
-                parts.iter().all(|p| name.split('.').any(|np| np == *p))
-            });
-            if !has_match {
-                missing.push(name.clone());
-            }
-        }
-        assert!(missing.is_empty(), "theme missing captures: {:?}", missing);
+        // With semantic names, every capture should have a non-empty name.
+        assert!(
+            names.iter().all(|n| !n.is_empty()),
+            "empty capture names found: {:?}",
+            names
+        );
     }
 }

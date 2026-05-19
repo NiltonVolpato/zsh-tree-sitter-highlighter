@@ -115,18 +115,24 @@ _zsh_ts_highlighter() {
 
     local -a new_regions=()
     for region in "${(@f)BENCODE_MSG[regions]}"; do
-        [[ -n "$region" ]] && new_regions+=("$region memo=zsh_ts_highlighter")
+        [[ -n "$region" ]] || continue
+        # region is "start end semantic_name"
+        local range="${region% *}"
+        local semantic="${region##* }"
+        local attrs="$(_zsh_ts_apply_theme "$semantic")"
+        [[ -n "$attrs" ]] && new_regions+=("$range $attrs memo=zsh_ts_highlighter")
     done
 
     # Dynamic command lookup: check daemon-reported commands against zsh's
     # $functions, $builtins, and $commands.  Unknown commands get an override.
     for cmd in "${(@f)BENCODE_MSG[commands]}"; do
-        [[ -z "$cmd" ]] && continue
+        [[ -n "$cmd" ]] || continue
         # cmd is in the format "start end name"
         local range="${cmd% *}"
         local name="${cmd##* }"
         if (( ! $+functions[$name] && ! $+builtins[$name] && ! $+commands[$name] && ! $+aliases[$name] )); then
-            new_regions+=("$range fg=#f7768e memo=zsh_ts_highlighter")
+            local attrs="$(_zsh_ts_apply_theme unknown_command)"
+            new_regions+=("$range $attrs memo=zsh_ts_highlighter")
         fi
     done
 
@@ -142,6 +148,43 @@ fi
 if ! zmodload zsh/system 2>/dev/null; then
     print -u2 "zsh-tree-sitter-highlighter: failed to load zsh/system module"
 fi
+
+# Theme: maps semantic names (tree-sitter capture names) to zsh region_highlight
+# attributes.  Override this associative array before sourcing the template to
+# customise colours.
+typeset -gA _ZSH_TS_HIGHLIGHTER_THEME=(
+    [comment]="fg=#565f89"
+    [constant]="fg=#ff5370"
+    [embedded]="fg=#73daca"
+    [function]="fg=#7aa2f7"
+    [keyword]="fg=#c099ff"
+    [number]="fg=#ff9e64"
+    [operator]="fg=#89ddff"
+    [property]="fg=#73daca"
+    [string]="fg=#e0af68"
+    [text.emphasis]="fg=#c099ff"
+    [text.literal]="fg=#e0af68"
+    [text.reference]="fg=#7aa2f7"
+    [text.strong]="fg=#c099ff"
+    [text.title]="fg=#7aa2f7"
+    [text.uri]="fg=#73daca"
+    [punctuation.delimiter]="fg=#89ddff"
+    [punctuation.special]="fg=#89ddff"
+    [string.escape]="fg=#ff5370"
+    [none]=""
+    [path]="underline"
+    [path.directory]="fg=#7aa2f7,underline"
+    [unknown_command]="fg=#f7768e"
+)
+
+# Converts a semantic name to a zsh region_highlight attribute string.
+# Looks up the name in _ZSH_TS_HIGHLIGHTER_THEME and falls back to empty.
+_zsh_ts_apply_theme() {
+    emulate -L zsh
+    local semantic="$1"
+    local attrs="${_ZSH_TS_HIGHLIGHTER_THEME[$semantic]}"
+    print -r -- "$attrs"
+}
 
 autoload -U add-zle-hook-widget
 add-zle-hook-widget line-pre-redraw _zsh_ts_highlighter

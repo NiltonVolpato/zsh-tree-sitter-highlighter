@@ -24,7 +24,10 @@ fn exe_path() -> PathBuf {
 fn wait_for_socket(socket: &Path, timeout_ms: u64) -> bool {
     for _ in 0..timeout_ms / 10 {
         if socket.exists() {
-            return true;
+            // Also verify we can actually connect
+            if std::os::unix::net::UnixStream::connect(socket).is_ok() {
+                return true;
+            }
         }
         thread::sleep(Duration::from_millis(10));
     }

@@ -18,7 +18,6 @@ use std::{
 
 use crate::api::{Request, Response};
 use crate::highlight::{HighlightEngine, LanguageConfig, Span};
-use crate::theme::tokyonight_dark;
 use serde::Deserialize;
 
 const PROTOCOL_VERSION: &str = "2";
@@ -264,8 +263,7 @@ fn start_daemon_internal(runtime_dir: &Path, no_daemon: bool) -> Result<(Role, b
 
     let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
-    let theme = tokyonight_dark();
-    let engine = Arc::new(HighlightEngine::new(theme)?);
+    let engine = Arc::new(HighlightEngine::new()?);
 
     // Warm-up highlighting
     let init_engine = Arc::clone(&engine);
@@ -302,7 +300,6 @@ fn start_daemon_internal(runtime_dir: &Path, no_daemon: bool) -> Result<(Role, b
 
 /// One-shot highlight for CLI usage.
 pub fn highlight_one_shot(lang: LanguageConfig, text: &str) -> Result<Vec<Span>> {
-    let theme = tokyonight_dark();
-    let engine = HighlightEngine::new(theme)?;
+    let engine = HighlightEngine::new()?;
     engine.highlight(lang, text)
 }
