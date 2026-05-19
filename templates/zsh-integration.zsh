@@ -113,31 +113,23 @@ _zsh_ts_highlighter() {
         return
     fi
 
-    local -a new_regions=()
-    for region in "${(@f)BENCODE_MSG[regions]}"; do
-        [[ -n "$region" ]] || continue
-        # region is "start end semantic_name"
-        local range="${region% *}"
-        local semantic="${region##* }"
-        local attrs="$(_zsh_ts_apply_theme "$semantic")"
-        [[ -n "$attrs" ]] && new_regions+=("$range $attrs memo=zsh_ts_highlighter")
-    done
+    local -a new_semantic_regions=( ${(f)BENCODE_MSG[regions]} )
 
     # Dynamic command lookup: check daemon-reported commands against zsh's
     # $functions, $builtins, and $commands.  Unknown commands get an override.
-    for cmd in "${(@f)BENCODE_MSG[commands]}"; do
-        [[ -n "$cmd" ]] || continue
+    for cmd in ${(f)BENCODE_MSG[commands]}; do
         # cmd is in the format "start end name"
-        local range="${cmd% *}"
         local name="${cmd##* }"
         if (( ! $+functions[$name] && ! $+builtins[$name] && ! $+commands[$name] && ! $+aliases[$name] )); then
-            local attrs="$(_zsh_ts_apply_theme unknown_command)"
-            new_regions+=("$range $attrs memo=zsh_ts_highlighter")
+            local range="${cmd% *}"
+            new_semantic_regions+=("$range unknown_command")
         fi
     done
 
     exec {fd}>&-
 
+    local -a new_regions=()
+    _zsh_ts_apply_theme
     region_highlight+=("${new_regions[@]}")
 }
 
@@ -181,9 +173,12 @@ typeset -gA _ZSH_TS_HIGHLIGHTER_THEME=(
 # Looks up the name in _ZSH_TS_HIGHLIGHTER_THEME and falls back to empty.
 _zsh_ts_apply_theme() {
     emulate -L zsh
-    local semantic="$1"
-    local attrs="${_ZSH_TS_HIGHLIGHTER_THEME[$semantic]}"
-    print -r -- "$attrs"
+    for region in "${new_semantic_regions[@]}"; do
+        local range="${region% *}"
+        local semantic="${region##* }"
+        local attrs="${_ZSH_TS_HIGHLIGHTER_THEME[$semantic]}"
+        [[ -n "$attrs" ]] && new_regions+=("$range $attrs memo=zsh_ts_highlighter")
+    done
 }
 
 autoload -U add-zle-hook-widget

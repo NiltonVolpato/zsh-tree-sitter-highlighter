@@ -153,6 +153,8 @@ export _ZSH_TS_HIGHLIGHTER_VERSION=2
 # Mock zle so we can capture zle -M calls
 zle() {{ echo "ZLE ${{(qq)@}}" }}
 source '{template}'
+# Keep semantic names for regions (add memo suffix like the real apply_theme)
+_zsh_ts_apply_theme() {{ new_regions+=( "${{new_semantic_regions[@]}}" ) }}
 "#,
         exe = exe.to_str().unwrap(),
         runtime_dir = runtime_dir.to_str().unwrap(),
@@ -575,7 +577,7 @@ _zsh_ts_highlighter
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 4 function' )",
         "",
     );
 }
@@ -613,7 +615,7 @@ _zsh_ts_highlighter
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' '5 10 fg=#e0af68 memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 4 function' '5 10 string' )",
         "",
     );
 }
@@ -635,7 +637,7 @@ _zsh_ts_highlighter
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' '5 11 fg=#e0af68 memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 4 function' '5 11 string' )",
         "",
     );
 }
@@ -658,7 +660,7 @@ _zsh_ts_highlighter
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 4 function' )",
         "",
     );
 }
@@ -678,7 +680,7 @@ _zsh_ts_highlighter
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 3 fg=#7aa2f7 memo=zsh_ts_highlighter' '4 15 underline memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 3 function' '4 15 path' )",
         "",
     );
 }
@@ -704,7 +706,7 @@ fn test_zsh_memo_filtering_preserves_other() {
     let result = run_zsh_with_daemon(
         &dir,
         r#"
-region_highlight=("0 10 some_other_plugin")
+region_highlight=("0 10 fg=gray memo=some_other_plugin")
 BUFFER="echo hello"
 PREBUFFER=""
 _zsh_ts_highlighter
@@ -713,7 +715,7 @@ _zsh_ts_highlighter
     // The other_plugin entry should be preserved; our memo entry is added.
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 10 some_other_plugin' '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 10 fg=gray memo=some_other_plugin' '0 4 function' )",
         "",
     );
 }
@@ -724,7 +726,7 @@ fn test_zsh_memo_filtering_removes_old_memo() {
     let result = run_zsh_with_daemon(
         &dir,
         r#"
-region_highlight=("0 10 some_other_plugin" "0 4 fg=#7aa2f7 memo=zsh_ts_highlighter")
+region_highlight=("0 10 fg=gray memo=some_other_plugin" "0 4 fg=#7aa2f7 memo=zsh_ts_highlighter")
 BUFFER="ls /tmp"
 PREBUFFER=""
 PWD="/"
@@ -733,7 +735,7 @@ _zsh_ts_highlighter
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 10 some_other_plugin' '0 2 fg=#7aa2f7 memo=zsh_ts_highlighter' '3 7 fg=#7aa2f7,underline memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 10 fg=gray memo=some_other_plugin' '0 2 function' '3 7 path.directory' )",
         "",
     );
 }
@@ -816,7 +818,7 @@ _zsh_ts_highlighter
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 4 function' )",
         "",
     );
 }
@@ -838,7 +840,7 @@ _zsh_ts_highlighter
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 11 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 11 function' )",
         "",
     );
 }
@@ -860,9 +862,39 @@ _zsh_ts_highlighter
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 8 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 8 function' )",
         "",
     );
+}
+
+/// Unit test for `_zsh_ts_apply_theme`: verifies the semantic → ANSI mapping.
+#[test]
+fn test_apply_theme_maps_semantic_names() {
+    let template = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("templates/zsh-integration.zsh");
+    let script = format!(
+        r#"
+source '{template}'
+new_semantic_regions=("0 4 function" "5 10 string" "11 15 path" "16 20 unknown_semantic")
+new_regions=()
+_zsh_ts_apply_theme
+for r in "${{new_regions[@]}}"; do
+    echo "$r"
+done
+"#,
+        template = template.to_str().unwrap(),
+    );
+    let output = run_zsh_script(&script);
+    assert!(output.success, "zsh failed: {}", output.stderr);
+    let lines: Vec<&str> = output.output_before.trim().lines().collect();
+    assert_eq!(
+        lines.len(),
+        3,
+        "expected 3 mapped regions, got: {:?}",
+        lines
+    );
+    assert_eq!(lines[0], "0 4 fg=#7aa2f7 memo=zsh_ts_highlighter");
+    assert_eq!(lines[1], "5 10 fg=#e0af68 memo=zsh_ts_highlighter");
+    assert_eq!(lines[2], "11 15 underline memo=zsh_ts_highlighter");
 }
 
 /// An unknown command should get the red "unknown command" override.
@@ -880,7 +912,7 @@ _zsh_ts_highlighter
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 14 fg=#7aa2f7 memo=zsh_ts_highlighter' '0 14 fg=#f7768e memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 14 function' '0 14 unknown_command' )",
         "",
     );
 }
