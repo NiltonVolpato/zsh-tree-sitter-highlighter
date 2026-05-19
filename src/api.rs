@@ -1,16 +1,16 @@
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Deserialize, Debug)]
-struct Request {
-    version: String,
-    mode: String,
-    cwd: String,
-    prebuffer: String,
-    buffer: String,
+pub struct Request {
+    pub version: String,
+    pub mode: String,
+    pub cwd: String,
+    pub prebuffer: String,
+    pub buffer: String,
 }
 
 #[derive(Serialize, Debug)]
-struct Response {
-    // Highlight regions. Newline separated.
-    regions: Option<String>,
+pub struct Response {
+    /// Highlight regions. Newline separated.
+    pub regions: String,
 }

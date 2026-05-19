@@ -1,11 +1,29 @@
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
     time::Duration,
 };
+
+use serde_derive::{Deserialize, Serialize};
+
+/// Bencode request struct matching the zsh client format.
+#[derive(Serialize)]
+struct TestRequest<'a> {
+    version: &'a str,
+    mode: &'a str,
+    cwd: &'a str,
+    prebuffer: &'a str,
+    buffer: &'a str,
+}
+
+/// Bencode response struct matching the daemon format.
+#[derive(Deserialize, Debug)]
+struct TestResponse {
+    regions: String,
+}
 
 fn exe_path() -> PathBuf {
     std::env::var_os("CARGO_BIN_EXE_zsh-tree-sitter-highlighter")
@@ -38,27 +56,34 @@ fn send_request(socket: &Path, ver: &str, lang: &str, pwd: &str, prebuffer: &str
         .set_write_timeout(Some(Duration::from_secs(2)))
         .unwrap();
 
-    // Send key=length:value records (character counts, matching zsh ${#var})
-    let request = format!(
-        "ver={}:{}\nlang={}:{}\npwd={}:{}\nprebuffer={}:{}\nbuffer={}:{}\nEOM=0:\n",
-        ver.chars().count(), ver,
-        lang.chars().count(), lang,
-        pwd.chars().count(), pwd,
-        prebuffer.chars().count(), prebuffer,
-        buffer.chars().count(), buffer,
-    );
-    stream.write_all(request.as_bytes()).unwrap();
-
+    // Send bencode request (raw bytes, no length prefix)
+    let request = TestRequest {
+        version: ver,
+        mode: lang,
+        cwd: pwd,
+        prebuffer,
+        buffer,
+    };
+    let request_bytes = bt_bencode::to_vec(&request).expect("serialize request");
+    stream.write_all(&request_bytes).unwrap();
     let _ = stream.shutdown(std::net::Shutdown::Write);
 
-    let reader = BufReader::new(&stream);
-    reader
-        .lines()
-        .map(|l| l.unwrap())
-        .filter(|l| !l.is_empty())
-        .collect()
-}
+    // Read response: byte_length + '\n' + exactly byte_length bytes
+    let mut reader = BufReader::new(&stream);
+    let mut length_line = String::new();
+    reader.read_line(&mut length_line).expect("read length line");
+    let byte_length: usize = length_line.trim().parse().expect("parse byte length");
 
+    let mut response_buf = vec![0u8; byte_length];
+    reader.read_exact(&mut response_buf).expect("read response bytes");
+
+    let response: TestResponse = bt_bencode::from_slice(&response_buf).expect("deserialize response");
+    if response.regions.is_empty() {
+        Vec::new()
+    } else {
+        response.regions.lines().map(|s| s.to_owned()).collect()
+    }
+}
 fn start_daemon_in(dir: &std::path::Path) -> std::process::Child {
     let child = Command::new(exe_path())
         .args(["start-foreground"])
@@ -97,6 +122,8 @@ struct ZshResult {
     stderr: String,
     /// Exit code of the zsh process.
     success: bool,
+    /// The full script that was executed.
+    script: String,
 }
 
 /// Start a daemon in a temp dir and return the guard + runtime dir path.
@@ -171,6 +198,49 @@ fn run_zsh_script(script: &str) -> ZshResult {
         region_highlight: after.trim_end().to_owned(),
         stderr,
         success: result.status.success(),
+        script: script.to_owned(),
+    }
+}
+
+/// Comprehensive assertion helper for zsh subprocess tests.
+/// On failure prints the full script, stdout, stderr, and diffs.
+fn assert_zsh_result(result: &ZshResult, expected_rh: &str, expected_zle: Option<&str>) {
+    let mut errors = Vec::new();
+
+    if !result.success {
+        errors.push(format!("zsh exited with non-zero status\nstderr:\n{}", result.stderr));
+    }
+
+    if let Some(expected) = expected_zle {
+        if !result.output_before.contains(expected) {
+            errors.push(format!(
+                "expected ZLE output containing {:?}, got:\n{}",
+                expected, result.output_before
+            ));
+        }
+    } else if !result.output_before.is_empty() {
+        errors.push(format!(
+            "expected no ZLE output, got:\n{}",
+            result.output_before
+        ));
+    }
+
+    if result.region_highlight != expected_rh {
+        errors.push(format!(
+            "region_highlight mismatch.\nexpected:\n  {}\nactual:\n  {}",
+            expected_rh, result.region_highlight
+        ));
+    }
+
+    if !errors.is_empty() {
+        panic!(
+            "zsh test failed:\n{}\n\n--- full zsh script ---\n{}\n\n--- stdout ---\n{}---RESULT---\n{}\n\n--- stderr ---\n{}",
+            errors.join("\n\n"),
+            result.script,
+            result.output_before,
+            result.region_highlight,
+            result.stderr
+        );
     }
 }
 
@@ -443,12 +513,10 @@ BUFFER="echo hello"
 PREBUFFER=""
 _zsh_ts_highlighter
 "#);
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(result.output_before.is_empty(),
-        "expected no zle output, got:\n{}", result.output_before);
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        None,
     );
 }
 
@@ -461,12 +529,10 @@ BUFFER='echo "foo"'
 PREBUFFER=""
 _zsh_ts_highlighter
 "#);
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(result.output_before.is_empty(),
-        "expected no zle output, got:\n{}", result.output_before);
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' '5 10 fg=#e0af68 memo=zsh_ts_highlighter' )",
+        None,
     );
 }
 
@@ -482,12 +548,10 @@ BUFFER='echo "café"'
 PREBUFFER=""
 _zsh_ts_highlighter
 "#);
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(result.output_before.is_empty(),
-        "expected no zle output, got:\n{}", result.output_before);
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' '5 11 fg=#e0af68 memo=zsh_ts_highlighter' )",
+        None,
     );
 }
 
@@ -505,12 +569,10 @@ PREBUFFER="abcé"
 _zsh_ts_highlighter
 "#
     );
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(result.output_before.is_empty(),
-        "expected no zle output, got:\n{}", result.output_before);
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=( '0 4 fg=#f7768e memo=zsh_ts_highlighter' )",
+        None,
     );
 }
 
@@ -524,12 +586,10 @@ PREBUFFER=""
 PWD="/"
 _zsh_ts_highlighter
 "#);
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(result.output_before.is_empty(),
-        "expected no zle output, got:\n{}", result.output_before);
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=( '0 3 fg=#7aa2f7 memo=zsh_ts_highlighter' '4 15 underline memo=zsh_ts_highlighter' )",
+        None,
     );
 }
 
@@ -542,12 +602,10 @@ BUFFER=""
 PREBUFFER=""
 _zsh_ts_highlighter
 "#);
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(result.output_before.is_empty(),
-        "expected no zle output, got:\n{}", result.output_before);
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=(  )",
+        None,
     );
 }
 
@@ -560,13 +618,11 @@ BUFFER="echo hello"
 PREBUFFER=""
 _zsh_ts_highlighter
 "#);
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(result.output_before.is_empty(),
-        "expected no zle output, got:\n{}", result.output_before);
     // The other_plugin entry should be preserved; our memo entry is added.
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=( '0 10 some_other_plugin' '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        None,
     );
 }
 
@@ -580,12 +636,10 @@ PREBUFFER=""
 PWD="/"
 _zsh_ts_highlighter
 "#);
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(result.output_before.is_empty(),
-        "expected no zle output, got:\n{}", result.output_before);
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=( '0 10 some_other_plugin' '0 2 fg=#7aa2f7 memo=zsh_ts_highlighter' '3 7 fg=#7aa2f7,underline memo=zsh_ts_highlighter' )",
+        None,
     );
 }
 
@@ -597,14 +651,10 @@ BUFFER="echo hello"
 PREBUFFER=""
 _zsh_ts_highlighter
 "#);
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(
-        result.output_before.contains("daemon socket not found"),
-        "expected 'daemon socket not found' error, got:\n{}", result.output_before,
-    );
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=(  )",
+        Some("daemon socket not found"),
     );
 }
 
@@ -617,14 +667,10 @@ BUFFER="echo hello"
 PREBUFFER=""
 _zsh_ts_highlighter
 "#);
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(
-        result.output_before.contains("_ZSH_TS_HIGHLIGHTER_VERSION not set"),
-        "expected version-not-set error, got:\n{}", result.output_before,
-    );
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=(  )",
+        Some("_ZSH_TS_HIGHLIGHTER_VERSION not set"),
     );
 }
 
@@ -641,11 +687,9 @@ BUFFER=$'echo hello\n'
 PREBUFFER=""
 _zsh_ts_highlighter
 "#);
-    assert!(result.success, "zsh failed: {}", result.stderr);
-    assert!(result.output_before.is_empty(),
-        "expected no zle output, got:\n{}", result.output_before);
-    assert_eq!(
-        result.region_highlight,
+    assert_zsh_result(
+        &result,
         "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        None,
     );
 }

@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use rayon::ThreadPoolBuilder;
 use std::{
     fs::{self, Permissions},
-    io::{BufReader, Write, stdout},
+    io::{Write, stdout},
     os::{
         fd::AsRawFd,
         unix::{
@@ -16,9 +16,10 @@ use std::{
     time::Duration,
 };
 
+use crate::api::{Request, Response};
 use crate::highlight::{HighlightEngine, LanguageConfig, Span};
-use crate::protocol::read_request;
 use crate::theme::tokyonight_dark;
+use serde::Deserialize;
 
 const PROTOCOL_VERSION: &str = "2";
 
@@ -49,36 +50,35 @@ fn pid_alive(pid: u32) -> bool {
 }
 
 fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Result<()> {
-    let mut reader = BufReader::new(&stream);
-
-    // Read key=length:value records until the `buffer` key is seen.
-    // This avoids needing EOF: the client keeps the connection open for the response.
-    let fields = read_request(&mut reader).context("unable to read request")?;
+    // Read the bencode request.  The client sends a raw bencode dictionary
+    // (no length prefix) and keeps the connection open for the response.
+    // We use the streaming deserializer directly and intentionally do NOT call
+    // `deserializer.end()` — that would fail because the socket still has unread
+    // bytes (the client is waiting for our response on the same stream).
+    let mut deserializer = bt_bencode::Deserializer::from_reader(&stream);
+    let request = Request::deserialize(&mut deserializer)
+        .context("unable to deserialize bencode request")?;
 
     // Verify protocol version
-    let ver = fields.get("ver").map(|s| s.as_str()).unwrap_or("");
-    if ver != PROTOCOL_VERSION {
+    if request.version != PROTOCOL_VERSION {
         return Ok(());
     }
 
-    let lang = fields.get("lang").map(|s| s.as_str()).unwrap_or("zsh");
-    let prebuffer = fields.get("prebuffer").map(|s| s.as_str()).unwrap_or("");
-    let buffer = fields.get("buffer").map(|s| s.as_str()).unwrap_or("");
-    let pwd = fields.get("pwd").map(|s| s.as_str());
-
-    let language = match lang {
+    let language = match request.mode.as_str() {
         "markdown" | "md" => LanguageConfig::Markdown,
         _ => LanguageConfig::Zsh,
     };
 
     // Build full source: prebuffer + buffer
-    let full_source = format!("{prebuffer}{buffer}");
+    let full_source = format!("{}{}", request.prebuffer, request.buffer);
 
-    // Highlight with pwd for dynamic path resolution
+    // Highlight with cwd for dynamic path resolution
+    let pwd = Some(request.cwd.as_str());
     let spans = engine.highlight_with_pwd(language, &full_source, pwd)?;
 
     // Adjust span offsets: shift by prebuffer length, only return buffer spans
-    let prebuffer_char_len = prebuffer.chars().count();
+    let prebuffer_char_len = request.prebuffer.chars().count();
+    let mut regions = Vec::new();
     for span in spans {
         // Skip spans entirely within prebuffer
         if span.end <= prebuffer_char_len {
@@ -96,10 +96,22 @@ fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Re
             continue;
         }
 
-        stream
-            .write_all(format!("{start} {end} {}\n", span.style).as_bytes())
-            .context("unable to write response")?;
+        regions.push(format!("{start} {end} {}", span.style));
     }
+
+    let response = Response {
+        regions: regions.join("\n"),
+    };
+    let response_bytes = bt_bencode::to_vec(&response)
+        .context("unable to serialize bencode response")?;
+
+    // The zsh client expects: byte_length + '\n' + exactly byte_length bytes
+    stream
+        .write_all(format!("{}\n", response_bytes.len()).as_bytes())
+        .context("unable to write response length")?;
+    stream
+        .write_all(&response_bytes)
+        .context("unable to write response bytes")?;
 
     Ok(())
 }

@@ -2,7 +2,6 @@ mod api;
 mod daemon;
 mod dynamic;
 mod highlight;
-mod protocol;
 mod theme;
 
 use anyhow::{Context, Result, bail};

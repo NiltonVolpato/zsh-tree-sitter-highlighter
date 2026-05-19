@@ -13,7 +13,7 @@ bencode_encode() {
     emulate -L zsh
     unsetopt multibyte
     print -nr "d"
-    for k v in ${(kv)BENCODE_MSG}; do
+    for k v in "${(kv)BENCODE_MSG[@]}"; do
         print -nr "${#k}:${k}"
         print -nr "${#v}:${v}"
     done
@@ -52,9 +52,9 @@ parse_response() {
     unsetopt multibyte
     local fd="$1"
     local byte_length
-    read -r -u "$fd" byte_length
+    read -r -u "$fd" byte_length || return 3
     local bytes
-    read -r -u "$fd" -k "$byte_length" bytes
+    sysread -i "$fd" -c "$byte_length" bytes || return 4
     bencode_decode "$bytes"
 }
 
@@ -95,20 +95,20 @@ _zsh_ts_highlighter() {
         )
         bencode_encode
     } >&$fd || {
-        exec {fd}>&-
         zle -M "zsh-tree-sitter-highlighter: failed to send request to daemon"
+        exec {fd}>&-
         return
     }
 
     local -A BENCODE_MSG
     parse_response "$fd" || {
+        zle -M "zsh-tree-sitter-highlighter: failed to parse response from daemon ($?)"
         exec {fd}>&-
-        zle -M "zsh-tree-sitter-highlighter: failed to parse response from daemon"
         return
     }
 
     local -a new_regions=()
-    for region in "${(s:\n:)BENCODE_MSG[regions]}"; do
+    for region in "${(@f)BENCODE_MSG[regions]}"; do
         new_regions+=("$region memo=zsh_ts_highlighter")
     done
 
@@ -123,6 +123,10 @@ _zsh_ts_highlighter() {
 
 if ! zmodload zsh/net/socket 2>/dev/null; then
     print -u2 "zsh-tree-sitter-highlighter: failed to load zsh/net/socket module"
+fi
+
+if ! zmodload zsh/system 2>/dev/null; then
+    print -u2 "zsh-tree-sitter-highlighter: failed to load zsh/system module"
 fi
 
 autoload -U add-zle-hook-widget
