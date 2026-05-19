@@ -118,6 +118,19 @@ _zsh_ts_highlighter() {
         [[ -n "$region" ]] && new_regions+=("$region memo=zsh_ts_highlighter")
     done
 
+    # Dynamic command lookup: check daemon-reported commands against zsh's
+    # $functions, $builtins, and $commands.  Unknown commands get an override.
+    for cmd in "${(@f)BENCODE_MSG[commands]}"; do
+        [[ -z "$cmd" ]] && continue
+        local -a cmd_parts=(${=cmd})
+        local start="${cmd_parts[1]}"
+        local end="${cmd_parts[2]}"
+        local name="${cmd_parts[3]}"
+        if (( ! $+functions[$name] && ! $+builtins[$name] && ! $+commands[$name] && ! $+aliases[$name] )); then
+            new_regions+=("$start $end fg=#f7768e memo=zsh_ts_highlighter")
+        fi
+    done
+
     exec {fd}>&-
 
     region_highlight+=("${new_regions[@]}")

@@ -63,6 +63,7 @@ fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Re
     if request.version != PROTOCOL_VERSION {
         let response = Response {
             regions: String::new(),
+            commands: String::new(),
             status: format!(
                 "version mismatch (client={}, daemon={})",
                 request.version, PROTOCOL_VERSION
@@ -83,8 +84,30 @@ fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Re
     let pwd = Some(request.cwd.as_str());
     let spans = engine.highlight_with_pwd(language, &full_source, pwd)?;
 
-    // Adjust span offsets: shift by prebuffer length, only return buffer spans
+    // Adjust span and command offsets: shift by prebuffer length, only return buffer spans
     let prebuffer_char_len = request.prebuffer.chars().count();
+
+    // Extract command positions for zsh mode (zsh will check $functions/$builtins/$commands)
+    let mut commands = Vec::new();
+    if language == LanguageConfig::Zsh {
+        for (start, end, name) in engine.extract_zsh_commands(&full_source)? {
+            // Skip commands entirely within prebuffer
+            if end <= prebuffer_char_len {
+                continue;
+            }
+            let start = if start < prebuffer_char_len {
+                0
+            } else {
+                start - prebuffer_char_len
+            };
+            let end = end - prebuffer_char_len;
+            if start >= end {
+                continue;
+            }
+            commands.push(format!("{start} {end} {name}"));
+        }
+    }
+
     let mut regions = Vec::new();
     for span in spans {
         // Skip spans entirely within prebuffer
@@ -108,6 +131,7 @@ fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Re
 
     let response = Response {
         regions: regions.join("\n"),
+        commands: commands.join("\n"),
         status: "ok".to_string(),
     };
     write_response(&mut stream, &response)

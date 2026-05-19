@@ -177,6 +177,35 @@ impl HighlightEngine {
         Ok((tree, static_spans))
     }
 
+    /// Extract command name positions from zsh source.
+    /// Returns (start_char, end_char, name) for each `command_name` node.
+    pub fn extract_zsh_commands(&self, source: &str) -> Result<Vec<(usize, usize, String)>> {
+        let language: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language)?;
+        let tree = parser.parse(source, None).context("zsh parsing failed")?;
+        let mut commands = Vec::new();
+        Self::walk_commands(tree.root_node(), source, &mut commands);
+        Ok(commands)
+    }
+
+    fn walk_commands(
+        node: tree_sitter::Node,
+        source: &str,
+        commands: &mut Vec<(usize, usize, String)>,
+    ) {
+        if node.kind() == "command_name" {
+            let start = source[..node.start_byte()].chars().count();
+            let end = source[..node.end_byte()].chars().count();
+            let name = source[node.start_byte()..node.end_byte()].to_string();
+            commands.push((start, end, name));
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::walk_commands(child, source, commands);
+        }
+    }
+
     fn highlight_markdown(&self, source: &str) -> Result<Vec<Span>> {
         // Markdown requires trailing newline.
         let owned_source;

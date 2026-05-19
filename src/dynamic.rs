@@ -4,14 +4,6 @@ use std::path::Path;
 use crate::highlight::Span;
 use crate::theme::Style;
 
-/// Result of looking up a command name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommandType {
-    Builtin,
-    Executable,
-    Missing,
-}
-
 /// Result of looking up a path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathType {
@@ -21,14 +13,12 @@ pub enum PathType {
 
 /// Environment for dynamic lookups.
 pub struct LookupEnv {
-    pub resolve_command: Box<dyn Fn(&str) -> CommandType + Send + Sync>,
     pub resolve_path: Box<dyn Fn(&str) -> Option<PathType> + Send + Sync>,
 }
 
 impl Default for LookupEnv {
     fn default() -> Self {
         Self {
-            resolve_command: Box::new(real_resolve_command),
             resolve_path: Box::new(real_resolve_path(None)),
         }
     }
@@ -39,19 +29,8 @@ impl LookupEnv {
     pub fn with_pwd(pwd: &str) -> Self {
         let pwd = pwd.to_string();
         Self {
-            resolve_command: Box::new(real_resolve_command),
             resolve_path: Box::new(real_resolve_path(Some(pwd))),
         }
-    }
-}
-
-fn real_resolve_command(name: &str) -> CommandType {
-    if is_builtin(name) {
-        CommandType::Builtin
-    } else if is_in_path(name) {
-        CommandType::Executable
-    } else {
-        CommandType::Missing
     }
 }
 
@@ -94,43 +73,7 @@ fn real_resolve_path(pwd: Option<String>) -> impl Fn(&str) -> Option<PathType> {
     }
 }
 
-fn is_builtin(name: &str) -> bool {
-    const BUILTINS: &[&str] = &[
-        "alias", "autoload", "bg", "bindkey", "break", "builtin", "cd", "chdir", "command",
-        "compadd", "comparguments", "compcall", "compctl", "compdescribe", "compfiles",
-        "compgroups", "compquote", "comptags", "comptry", "compvalues", "continue", "dirs",
-        "disable", "disown", "echo", "echotc", "echoti", "emulate", "enable", "eval", "exec",
-        "exit", "export", "false", "fc", "fg", "float", "functions", "getln", "getopts",
-        "hash", "history", "integer", "jobs", "kill", "let", "limit", "local", "log", "noglob",
-        "popd", "print", "printf", "pushd", "pushln", "pwd", "read", "readonly", "rehash",
-        "return", "sched", "set", "setopt", "shift", "source", "stat", "suspend", "test",
-        "times", "trap", "true", "ttyctl", "type", "typeset", "ulimit", "umask", "unalias",
-        "unfunction", "unhash", "unlimit", "unset", "unsetopt", "vared", "wait", "whence",
-        "where", "which", "zcompile", "zformat", "zle", "zmodload", "zparseopts", "zregexparse",
-        "zstat", "zstyle",
-        // bash compat
-        "bash", "sh", ".[", "[[", "]", "]]", "case", "do", "done", "elif", "else", "esac",
-        "fi", "for", "function", "if", "in", "select", "then", "until", "while",
-    ];
-    BUILTINS.contains(&name)
-}
-
-fn is_in_path(name: &str) -> bool {
-    if name.is_empty() || name.contains('/') {
-        return false;
-    }
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in path.split(':') {
-            let full = Path::new(dir).join(name);
-            if full.is_file() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Run dynamic highlighting on zsh source and return additional spans.
+/// Run dynamic path highlighting on zsh source and return additional spans.
 /// Accepts a pre-parsed tree to avoid double-parsing.
 pub fn dynamic_highlight_zsh(
     tree: &tree_sitter::Tree,
@@ -147,19 +90,6 @@ pub fn dynamic_highlight_zsh(
 
 fn walk_node(node: tree_sitter::Node, source: &str, lookups: &LookupEnv, spans: &mut Vec<Span>) {
     match node.kind() {
-        "command_name" => {
-            let text = node_text(node, source);
-            match (lookups.resolve_command)(&text) {
-                CommandType::Missing => {
-                    spans.push(Span {
-                        start: node_start_char(node, source),
-                        end: node_end_char(node, source),
-                        style: Style::new().fg("#f7768e").to_ansi(),
-                    });
-                }
-                _ => {}
-            }
-        }
         "word" | "string" => {
             let text = node_text(node, source);
             if looks_like_path(&text) {
@@ -400,25 +330,9 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_missing_command() {
-        let source = "xyzunknown cmd";
-        let lookups = LookupEnv {
-            resolve_command: Box::new(|_| CommandType::Missing),
-            resolve_path: Box::new(|_| None),
-        };
-        let tree = parse_zsh(source);
-        let spans = dynamic_highlight_zsh(&tree, source, &lookups).unwrap();
-        assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].start, 0);
-        assert_eq!(spans[0].end, 10);
-        assert!(spans[0].style.contains("#f7768e"));
-    }
-
-    #[test]
     fn dynamic_existing_path() {
         let source = "cat /etc/passwd";
         let lookups = LookupEnv {
-            resolve_command: Box::new(|_| CommandType::Builtin),
             resolve_path: Box::new(|_| Some(PathType::File)),
         };
         let tree = parse_zsh(source);

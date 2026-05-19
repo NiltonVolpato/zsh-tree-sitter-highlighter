@@ -640,22 +640,22 @@ _zsh_ts_highlighter
 #[test]
 fn test_zsh_multibyte_prebuffer() {
     let (_guard, dir) = start_daemon();
-    // PREBUFFER="abcé" (4 chars, 5 bytes). BUFFER="echo hello".
-    // Full source: "abcéecho hello" → parsed as command "abcéecho" [0..8] + arg "hello".
-    // The daemon shifts spans by prebuffer_char_len=4, producing buffer-relative span [0..4].
-    // If char counting regressed to byte counting (5), the span would be [0..3] instead.
+    // PREBUFFER="abcé\n" (5 chars, 6 bytes). BUFFER="echo hello".
+    // Full source: "abcé\necho hello" → "echo" is parsed as a separate command.
+    // The daemon shifts spans by prebuffer_char_len=5.
+    // If char counting regressed to byte counting (6), the span would be off by 1.
     let result = run_zsh_with_daemon(
         &dir,
         r#"
 region_highlight=()
 BUFFER="echo hello"
-PREBUFFER="abcé"
+PREBUFFER=$'abcé\n'
 _zsh_ts_highlighter
 "#,
     );
     assert_zsh_result(
         &result,
-        "typeset -a region_highlight=( '0 4 fg=#f7768e memo=zsh_ts_highlighter' )",
+        "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
         "",
     );
 }
@@ -814,6 +814,70 @@ _zsh_ts_highlighter
     assert_zsh_result(
         &result,
         "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        "",
+    );
+}
+
+/// A zsh function defined in the current session should be highlighted as a
+/// known command, not as an unknown command.
+#[test]
+fn test_zsh_function_highlighting() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
+my-function() { echo "$@" }
+region_highlight=()
+BUFFER="my-function foo"
+PREBUFFER=""
+_zsh_ts_highlighter
+"#,
+    );
+    assert_zsh_result(
+        &result,
+        "typeset -a region_highlight=( '0 11 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        "",
+    );
+}
+
+/// A zsh alias defined in the current session should be highlighted as a
+/// known command, not as an unknown command.
+#[test]
+fn test_zsh_alias_highlighting() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
+alias my-alias='echo'
+region_highlight=()
+BUFFER="my-alias foo"
+PREBUFFER=""
+_zsh_ts_highlighter
+"#,
+    );
+    assert_zsh_result(
+        &result,
+        "typeset -a region_highlight=( '0 8 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+        "",
+    );
+}
+
+/// An unknown command should get the red "unknown command" override.
+#[test]
+fn test_zsh_unknown_command() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
+region_highlight=()
+BUFFER="nonexistentcmd foo"
+PREBUFFER=""
+_zsh_ts_highlighter
+"#,
+    );
+    assert_zsh_result(
+        &result,
+        "typeset -a region_highlight=( '0 14 fg=#7aa2f7 memo=zsh_ts_highlighter' '0 14 fg=#f7768e memo=zsh_ts_highlighter' )",
         "",
     );
 }
