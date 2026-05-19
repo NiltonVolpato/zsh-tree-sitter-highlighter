@@ -61,7 +61,14 @@ fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Re
 
     // Verify protocol version
     if request.version != PROTOCOL_VERSION {
-        return Ok(());
+        let response = Response {
+            regions: String::new(),
+            status: format!(
+                "version mismatch (client={}, daemon={})",
+                request.version, PROTOCOL_VERSION
+            ),
+        };
+        return write_response(&mut stream, &response);
     }
 
     let language = match request.mode.as_str() {
@@ -101,9 +108,14 @@ fn handle_connection(mut stream: UnixStream, engine: Arc<HighlightEngine>) -> Re
 
     let response = Response {
         regions: regions.join("\n"),
+        status: "ok".to_string(),
     };
+    write_response(&mut stream, &response)
+}
+
+fn write_response(stream: &mut UnixStream, response: &Response) -> Result<()> {
     let response_bytes =
-        bt_bencode::to_vec(&response).context("unable to serialize bencode response")?;
+        bt_bencode::to_vec(response).context("unable to serialize bencode response")?;
 
     // The zsh client expects: byte_length + '\n' + exactly byte_length bytes
     stream

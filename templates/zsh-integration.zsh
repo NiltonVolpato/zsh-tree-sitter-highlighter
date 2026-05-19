@@ -107,6 +107,12 @@ _zsh_ts_highlighter() {
         return
     }
 
+    if [[ "${BENCODE_MSG[status]}" != "ok" ]]; then
+        zle -M "zsh-tree-sitter-highlighter: ${BENCODE_MSG[status]}"
+        exec {fd}>&-
+        return
+    fi
+
     local -a new_regions=()
     for region in "${(@f)BENCODE_MSG[regions]}"; do
         [[ -n "$region" ]] && new_regions+=("$region memo=zsh_ts_highlighter")

@@ -13,4 +13,6 @@ pub struct Request {
 pub struct Response {
     /// Highlight regions. Newline separated.
     pub regions: String,
+    /// `"ok"` on success, otherwise a descriptive status like `"version_mismatch"`.
+    pub status: String,
 }

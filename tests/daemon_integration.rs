@@ -772,6 +772,29 @@ _zsh_ts_highlighter
     );
 }
 
+/// When the client sends a newer protocol version than the daemon supports,
+/// the daemon should return a clear error response instead of silently
+/// closing the connection.
+#[test]
+fn test_zsh_version_mismatch() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon_extra(
+        &dir,
+        r#"export _ZSH_TS_HIGHLIGHTER_VERSION=$(( $_ZSH_TS_HIGHLIGHTER_VERSION + 1 ))"#,
+        r#"
+region_highlight=()
+BUFFER="echo hello"
+PREBUFFER=""
+_zsh_ts_highlighter
+"#,
+    );
+    assert_zsh_result(
+        &result,
+        "typeset -a region_highlight=(  )",
+        "ZLE '-M' 'zsh-tree-sitter-highlighter: version mismatch (client=3, daemon=2)'\n",
+    );
+}
+
 /// Regression test: BUFFER ending with a newline must not break the protocol.
 /// When print_kv sends a value that ends with '\n', print -r adds another '\n',
 /// producing a double newline. The parser must consume the trailing '\n' so the
