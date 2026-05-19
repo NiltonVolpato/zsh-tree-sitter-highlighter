@@ -122,12 +122,11 @@ _zsh_ts_highlighter() {
     # $functions, $builtins, and $commands.  Unknown commands get an override.
     for cmd in "${(@f)BENCODE_MSG[commands]}"; do
         [[ -z "$cmd" ]] && continue
-        local -a cmd_parts=(${=cmd})
-        local start="${cmd_parts[1]}"
-        local end="${cmd_parts[2]}"
-        local name="${cmd_parts[3]}"
+        # cmd is in the format "start end name"
+        local range="${cmd% *}"
+        local name="${cmd##* }"
         if (( ! $+functions[$name] && ! $+builtins[$name] && ! $+commands[$name] && ! $+aliases[$name] )); then
-            new_regions+=("$start $end fg=#f7768e memo=zsh_ts_highlighter")
+            new_regions+=("$range fg=#f7768e memo=zsh_ts_highlighter")
         fi
     done
 
