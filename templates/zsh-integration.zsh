@@ -167,6 +167,7 @@ typeset -gA _ZSH_TS_HIGHLIGHTER_THEME=(
     [path]="underline"
     [path.directory]="fg=#7aa2f7,underline"
     [unknown_command]="fg=#f7768e"
+    [variable]="fg=#bb9af7"
 )
 
 # Converts a semantic name to a zsh region_highlight attribute string.

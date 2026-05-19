@@ -897,6 +897,26 @@ done
     assert_eq!(lines[2], "11 15 underline memo=zsh_ts_highlighter");
 }
 
+/// A variable like $BAR inside a quoted string should get the variable highlight.
+#[test]
+fn test_zsh_variable_in_quotes() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(
+        &dir,
+        r#"
+region_highlight=()
+BUFFER="echo \"foo \$BAR\""
+PREBUFFER=""
+_zsh_ts_highlighter
+"#,
+    );
+    assert_zsh_result(
+        &result,
+        "typeset -a region_highlight=( '0 4 function' '5 15 string' '10 14 variable' )",
+        "",
+    );
+}
+
 /// An unknown command should get the red "unknown command" override.
 #[test]
 fn test_zsh_unknown_command() {

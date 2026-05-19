@@ -43,7 +43,11 @@ impl HighlightEngine {
         let md_lang: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
         let md_inline_lang: tree_sitter::Language = tree_sitter_md::INLINE_LANGUAGE.into();
 
-        let zsh_query = tree_sitter::Query::new(&zsh_lang, tree_sitter_zsh::HIGHLIGHT_QUERY)
+        let zsh_query_text = format!(
+            "{}\n(variable_ref (simple_variable_name)) @variable\n",
+            tree_sitter_zsh::HIGHLIGHT_QUERY
+        );
+        let zsh_query = tree_sitter::Query::new(&zsh_lang, &zsh_query_text)
             .context("failed to create zsh highlight query")?;
 
         let mut md_block_config = HighlightConfiguration::new(
@@ -560,7 +564,15 @@ mod tests {
 
     #[test]
     fn snapshot_zsh_variable() {
-        assert_zsh_highlights("echo $HOME", &[("echo", "function")]);
+        assert_zsh_highlights("echo $HOME", &[("echo", "function"), ("$HOME", "variable")]);
+    }
+
+    #[test]
+    fn snapshot_zsh_variable_in_quotes() {
+        assert_zsh_highlights(
+            r#"echo "foo $BAR""#,
+            &[("echo", "function"), ("\"foo $BAR\"", "string"), ("$BAR", "variable")],
+        );
     }
 
     #[test]
