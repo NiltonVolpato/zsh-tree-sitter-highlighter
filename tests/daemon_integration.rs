@@ -7,23 +7,7 @@ use std::{
     time::Duration,
 };
 
-use serde_derive::{Deserialize, Serialize};
-
-/// Bencode request struct matching the zsh client format.
-#[derive(Serialize)]
-struct TestRequest<'a> {
-    version: &'a str,
-    mode: &'a str,
-    cwd: &'a str,
-    prebuffer: &'a str,
-    buffer: &'a str,
-}
-
-/// Bencode response struct matching the daemon format.
-#[derive(Deserialize, Debug)]
-struct TestResponse {
-    regions: String,
-}
+use zsh_tree_sitter_highlighter::api::{Request, Response};
 
 fn exe_path() -> PathBuf {
     std::env::var_os("CARGO_BIN_EXE_zsh-tree-sitter-highlighter")
@@ -57,12 +41,12 @@ fn send_request(socket: &Path, ver: &str, lang: &str, pwd: &str, prebuffer: &str
         .unwrap();
 
     // Send bencode request (raw bytes, no length prefix)
-    let request = TestRequest {
-        version: ver,
-        mode: lang,
-        cwd: pwd,
-        prebuffer,
-        buffer,
+    let request = Request {
+        version: ver.to_string(),
+        mode: lang.to_string(),
+        cwd: pwd.to_string(),
+        prebuffer: prebuffer.to_string(),
+        buffer: buffer.to_string(),
     };
     let request_bytes = bt_bencode::to_vec(&request).expect("serialize request");
     stream.write_all(&request_bytes).unwrap();
@@ -77,7 +61,7 @@ fn send_request(socket: &Path, ver: &str, lang: &str, pwd: &str, prebuffer: &str
     let mut response_buf = vec![0u8; byte_length];
     reader.read_exact(&mut response_buf).expect("read response bytes");
 
-    let response: TestResponse = bt_bencode::from_slice(&response_buf).expect("deserialize response");
+    let response: Response = bt_bencode::from_slice(&response_buf).expect("deserialize response");
     if response.regions.is_empty() {
         Vec::new()
     } else {

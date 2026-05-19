@@ -1,6 +1,6 @@
 use serde_derive::{Deserialize, Serialize};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Request {
     pub version: String,
     pub mode: String,
@@ -9,7 +9,7 @@ pub struct Request {
     pub buffer: String,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
     /// Highlight regions. Newline separated.
     pub regions: String,

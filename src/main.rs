@@ -1,17 +1,11 @@
-mod api;
-mod daemon;
-mod dynamic;
-mod highlight;
-mod theme;
-
 use anyhow::{Context, Result, bail};
-use daemon::{
+use std::io::Read;
+use std::path::PathBuf;
+use zsh_tree_sitter_highlighter::daemon::{
     activate, highlight_one_shot, restart_daemon, start_daemon, start_daemon_foreground,
     status_daemon, stop_daemon,
 };
-use highlight::LanguageConfig;
-use std::io::Read;
-use std::path::PathBuf;
+use zsh_tree_sitter_highlighter::highlight::LanguageConfig;
 
 fn runtime_dir() -> Result<PathBuf> {
     let dir = std::env::var("XDG_RUNTIME_DIR")
