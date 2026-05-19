@@ -2,7 +2,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     thread,
     time::Duration,
 };
@@ -68,6 +68,110 @@ fn start_daemon_in(dir: &std::path::Path) -> std::process::Child {
         .spawn()
         .expect("failed to start daemon");
     child
+}
+
+// ---------------------------------------------------------------------------
+// Layer 2: zsh subprocess test infrastructure
+// ---------------------------------------------------------------------------
+
+struct DaemonGuard {
+    child: Child,
+    #[allow(dead_code)]
+    dir: tempfile::TempDir,
+}
+
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Captured output from a zsh subprocess test.
+struct ZshResult {
+    /// Everything before the "---RESULT---" sentinel (includes ZLE mock output).
+    output_before: String,
+    /// The `typeset -p region_highlight` output (exactly one line).
+    region_highlight: String,
+    /// Combined stderr.
+    stderr: String,
+    /// Exit code of the zsh process.
+    success: bool,
+}
+
+/// Start a daemon in a temp dir and return the guard + runtime dir path.
+fn start_daemon() -> (DaemonGuard, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("daemon.sock");
+    let child = start_daemon_in(dir.path());
+    assert!(wait_for_socket(&socket, 3000), "daemon did not create socket in time");
+    let guard = DaemonGuard { child, dir };
+    let runtime_dir = guard.dir.path().to_path_buf();
+    (guard, runtime_dir)
+}
+
+/// Build the common zsh setup preamble: env vars, zle mock, source template.
+fn zsh_setup_script(runtime_dir: &Path, extra_env: &str) -> String {
+    let exe = exe_path();
+    let template = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("templates/zsh-integration.zsh");
+    format!(
+        r#"
+export _ZSH_TS_HIGHLIGHTER_PATH='{exe}'
+export _ZSH_TS_HIGHLIGHTER_RUNTIME_DIR='{runtime_dir}'
+export _ZSH_TS_HIGHLIGHTER_VERSION=2
+{extra_env}
+# Mock zle so we can capture zle -M calls
+zle() {{ echo "ZLE ${{(qq)@}}" }}
+source '{template}'
+"#,
+        exe = exe.to_str().unwrap(),
+        runtime_dir = runtime_dir.to_str().unwrap(),
+        template = template.to_str().unwrap(),
+    )
+}
+
+/// Run a zsh subprocess with a running daemon. The `test_body` should set
+/// `BUFFER`, `PREBUFFER`, etc. and call `_zsh_ts_highlighter`.
+fn run_zsh_with_daemon(daemon_dir: &Path, test_body: &str) -> ZshResult {
+    run_zsh_with_daemon_extra(daemon_dir, "", test_body)
+}
+
+/// Like `run_zsh_with_daemon` but with extra env setup (e.g. unsetting vars).
+fn run_zsh_with_daemon_extra(daemon_dir: &Path, extra_env: &str, test_body: &str) -> ZshResult {
+    let script = format!(
+        "{}\n{}\necho '---RESULT---'\ntypeset -p region_highlight\n",
+        zsh_setup_script(daemon_dir, extra_env),
+        test_body,
+    );
+    run_zsh_script(&script)
+}
+
+/// Run a zsh subprocess without a daemon (for error-path tests).
+fn run_zsh_without_daemon(test_body: &str) -> ZshResult {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime_dir = dir.path().to_path_buf();
+    run_zsh_with_daemon_extra(&runtime_dir, "", test_body)
+}
+
+/// Execute a zsh script and capture output.
+fn run_zsh_script(script: &str) -> ZshResult {
+    let result = Command::new("zsh")
+        .arg("-c")
+        .arg(script)
+        .output()
+        .expect("failed to run zsh");
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr).into_owned();
+
+    let (before, after) = stdout.split_once("---RESULT---\n").unwrap_or((&stdout, ""));
+
+    ZshResult {
+        output_before: before.to_owned(),
+        region_highlight: after.trim_end().to_owned(),
+        stderr,
+        success: result.status.success(),
+    }
 }
 
 #[test]
@@ -323,5 +427,225 @@ expect eof
     assert!(
         stdout.contains("daemon socket not found"),
         "expected 'daemon socket not found' error message in output\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Layer 2: zsh subprocess tests (exact output matching)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_zsh_echo_hello() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(&dir, r#"
+region_highlight=()
+BUFFER="echo hello"
+PREBUFFER=""
+_zsh_ts_highlighter
+"#);
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(result.output_before.is_empty(),
+        "expected no zle output, got:\n{}", result.output_before);
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+    );
+}
+
+#[test]
+fn test_zsh_echo_quoted_foo() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(&dir, r#"
+region_highlight=()
+BUFFER='echo "foo"'
+PREBUFFER=""
+_zsh_ts_highlighter
+"#);
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(result.output_before.is_empty(),
+        "expected no zle output, got:\n{}", result.output_before);
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' '5 10 fg=#e0af68 memo=zsh_ts_highlighter' )",
+    );
+}
+
+#[test]
+fn test_zsh_multibyte_buffer() {
+    let (_guard, dir) = start_daemon();
+    // echo "café" — the quoted string "café" is 6 chars (", c, a, f, é, ").
+    // If char counting regressed to byte counting, é would be 2 bytes and the
+    // span [5..11] for the string would be wrong.
+    let result = run_zsh_with_daemon(&dir, r#"
+region_highlight=()
+BUFFER='echo "café"'
+PREBUFFER=""
+_zsh_ts_highlighter
+"#);
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(result.output_before.is_empty(),
+        "expected no zle output, got:\n{}", result.output_before);
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' '5 11 fg=#e0af68 memo=zsh_ts_highlighter' )",
+    );
+}
+
+#[test]
+fn test_zsh_multibyte_prebuffer() {
+    let (_guard, dir) = start_daemon();
+    // PREBUFFER="abcé" (4 chars, 5 bytes). BUFFER="echo hello".
+    // Full source: "abcéecho hello" → parsed as command "abcéecho" [0..8] + arg "hello".
+    // The daemon shifts spans by prebuffer_char_len=4, producing buffer-relative span [0..4].
+    // If char counting regressed to byte counting (5), the span would be [0..3] instead.
+    let result = run_zsh_with_daemon(&dir, r#"
+region_highlight=()
+BUFFER="echo hello"
+PREBUFFER="abcé"
+_zsh_ts_highlighter
+"#
+    );
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(result.output_before.is_empty(),
+        "expected no zle output, got:\n{}", result.output_before);
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=( '0 4 fg=#f7768e memo=zsh_ts_highlighter' )",
+    );
+}
+
+#[test]
+fn test_zsh_path_underline() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(&dir, r#"
+region_highlight=()
+BUFFER="cat /etc/passwd"
+PREBUFFER=""
+PWD="/"
+_zsh_ts_highlighter
+"#);
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(result.output_before.is_empty(),
+        "expected no zle output, got:\n{}", result.output_before);
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=( '0 3 fg=#7aa2f7 memo=zsh_ts_highlighter' '4 15 underline memo=zsh_ts_highlighter' )",
+    );
+}
+
+#[test]
+fn test_zsh_empty_buffer() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(&dir, r#"
+region_highlight=()
+BUFFER=""
+PREBUFFER=""
+_zsh_ts_highlighter
+"#);
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(result.output_before.is_empty(),
+        "expected no zle output, got:\n{}", result.output_before);
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=(  )",
+    );
+}
+
+#[test]
+fn test_zsh_memo_filtering_preserves_other() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(&dir, r#"
+region_highlight=("0 10 some_other_plugin")
+BUFFER="echo hello"
+PREBUFFER=""
+_zsh_ts_highlighter
+"#);
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(result.output_before.is_empty(),
+        "expected no zle output, got:\n{}", result.output_before);
+    // The other_plugin entry should be preserved; our memo entry is added.
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=( '0 10 some_other_plugin' '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
+    );
+}
+
+#[test]
+fn test_zsh_memo_filtering_removes_old_memo() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(&dir, r#"
+region_highlight=("0 10 some_other_plugin" "0 4 fg=#7aa2f7 memo=zsh_ts_highlighter")
+BUFFER="ls /tmp"
+PREBUFFER=""
+PWD="/"
+_zsh_ts_highlighter
+"#);
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(result.output_before.is_empty(),
+        "expected no zle output, got:\n{}", result.output_before);
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=( '0 10 some_other_plugin' '0 2 fg=#7aa2f7 memo=zsh_ts_highlighter' '3 7 fg=#7aa2f7,underline memo=zsh_ts_highlighter' )",
+    );
+}
+
+#[test]
+fn test_zsh_daemon_socket_not_found() {
+    let result = run_zsh_without_daemon(r#"
+region_highlight=()
+BUFFER="echo hello"
+PREBUFFER=""
+_zsh_ts_highlighter
+"#);
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(
+        result.output_before.contains("daemon socket not found"),
+        "expected 'daemon socket not found' error, got:\n{}", result.output_before,
+    );
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=(  )",
+    );
+}
+
+#[test]
+fn test_zsh_version_unset() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon_extra(&dir, "unset _ZSH_TS_HIGHLIGHTER_VERSION", r#"
+region_highlight=()
+BUFFER="echo hello"
+PREBUFFER=""
+_zsh_ts_highlighter
+"#);
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(
+        result.output_before.contains("_ZSH_TS_HIGHLIGHTER_VERSION not set"),
+        "expected version-not-set error, got:\n{}", result.output_before,
+    );
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=(  )",
+    );
+}
+
+/// Regression test: BUFFER ending with a newline must not break the protocol.
+/// When print_kv sends a value that ends with '\n', print -r adds another '\n',
+/// producing a double newline. The parser must consume the trailing '\n' so the
+/// next record (EOM) is parsed correctly.
+#[test]
+fn test_zsh_buffer_ending_with_newline() {
+    let (_guard, dir) = start_daemon();
+    let result = run_zsh_with_daemon(&dir, r#"
+region_highlight=()
+BUFFER=$'echo hello\n'
+PREBUFFER=""
+_zsh_ts_highlighter
+"#);
+    assert!(result.success, "zsh failed: {}", result.stderr);
+    assert!(result.output_before.is_empty(),
+        "expected no zle output, got:\n{}", result.output_before);
+    assert_eq!(
+        result.region_highlight,
+        "typeset -a region_highlight=( '0 4 fg=#7aa2f7 memo=zsh_ts_highlighter' )",
     );
 }

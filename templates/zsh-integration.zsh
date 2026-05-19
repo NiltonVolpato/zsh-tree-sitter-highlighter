@@ -10,8 +10,16 @@ zsh-tree-sitter-highlighter() {
 
 # Print a key=length:value record for the protocol.
 # Usage: print_kv key "$value"
+#
+# Each record is terminated by a newline.  When the value itself ends with
+# a newline, that newline doubles as the record terminator — we must not add
+# another one or the parser would see a spurious blank line.
 print_kv() {
-    print -r -- "$1=${#2}:${2}"
+    if [[ "$2" == *$'\n' ]]; then
+        print -rn -- "$1=${#2}:${2}"
+    else
+        print -r -- "$1=${#2}:${2}"
+    fi
 }
 
 _zsh_ts_highlighter() {
