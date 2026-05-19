@@ -30,6 +30,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
+name = "bt_bencode"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6398febbe0d54acd58256692c7d0608c0f49741ec830af6918129d6348f5c4bd"
+dependencies = [
+ "itoa",
+ "serde",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -680,9 +690,12 @@ name = "zsh-tree-sitter-highlighter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bt_bencode",
  "googletest",
  "libc",
  "rayon",
+ "serde",
+ "serde_derive",
  "tempfile",
  "tree-sitter",
  "tree-sitter-highlight",

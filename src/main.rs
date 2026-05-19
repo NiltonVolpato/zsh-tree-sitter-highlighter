@@ -1,11 +1,15 @@
-mod theme;
-mod highlight;
-mod dynamic;
-mod protocol;
+mod api;
 mod daemon;
+mod dynamic;
+mod highlight;
+mod protocol;
+mod theme;
 
 use anyhow::{Context, Result, bail};
-use daemon::{activate, start_daemon, start_daemon_foreground, stop_daemon, status_daemon, restart_daemon, highlight_one_shot};
+use daemon::{
+    activate, highlight_one_shot, restart_daemon, start_daemon, start_daemon_foreground,
+    status_daemon, stop_daemon,
+};
 use highlight::LanguageConfig;
 use std::io::Read;
 use std::path::PathBuf;
@@ -14,7 +18,8 @@ fn runtime_dir() -> Result<PathBuf> {
     let dir = std::env::var("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .or_else(|_| {
-            std::env::var("HOME").map(|h| PathBuf::from(h).join(".local/share/zsh-tree-sitter-highlighter"))
+            std::env::var("HOME")
+                .map(|h| PathBuf::from(h).join(".local/share/zsh-tree-sitter-highlighter"))
         })
         .context("unable to determine runtime directory")?;
     Ok(dir)
@@ -23,7 +28,10 @@ fn runtime_dir() -> Result<PathBuf> {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        bail!("Usage: {} <activate|start|start-foreground|stop|restart|status|highlight> [args...]", args[0]);
+        bail!(
+            "Usage: {} <activate|start|start-foreground|stop|restart|status|highlight> [args...]",
+            args[0]
+        );
     }
 
     match args[1].as_str() {
