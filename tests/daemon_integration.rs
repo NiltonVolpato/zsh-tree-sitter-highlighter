@@ -10,15 +10,16 @@ use std::{
 use zsh_tree_sitter_highlighter::api::{Request, Response};
 
 fn exe_path() -> PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_zsh-tree-sitter-highlighter")
+    let path = std::env::var_os("CARGO_BIN_EXE_daemon")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             std::env::current_exe()
                 .unwrap()
                 .parent()
                 .unwrap()
-                .join("zsh-tree-sitter-highlighter")
-        })
+                .join("daemon")
+        });
+    path
 }
 
 fn wait_for_socket(socket: &Path, timeout_ms: u64) -> bool {

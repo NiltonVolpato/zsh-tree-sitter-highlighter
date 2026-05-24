@@ -1,3 +1,10 @@
+[workspace]
+members = ["zsh-ts-module"]
+resolver = "3"
+
+[patch."https://github.com/zsh-rs/zsh-sys.git"]
+zsh-sys = { git = "https://github.com/NiltonVolpato/zsh-sys.git" }
+
 [package]
 name = "zsh-tree-sitter-highlighter"
 version = "0.1.0"
@@ -18,3 +25,10 @@ tree-sitter-zsh = "0.63.3"
 [dev-dependencies]
 googletest = "0.14.2"
 tempfile = "3"
+
+[[bin]]
+name = "daemon"
+path = "src/main.rs"
+
+[profile.release]
+debug = true

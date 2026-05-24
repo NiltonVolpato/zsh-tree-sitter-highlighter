@@ -1,0 +1,11 @@
+[package]
+name = "zsh-ts-module"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zsh-tree-sitter-highlighter = { path = ".." }
+zsh-module = { git = "https://github.com/NiltonVolpato/zsh-module.git" }
