@@ -1,34 +1,9 @@
 [workspace]
-members = ["zsh-ts-module"]
+members = ["zsh-ts-highlighter", "zsh-ts-module"]
 resolver = "3"
 
 [patch."https://github.com/zsh-rs/zsh-sys.git"]
 zsh-sys = { git = "https://github.com/NiltonVolpato/zsh-sys.git" }
-
-[package]
-name = "zsh-tree-sitter-highlighter"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-anyhow = "1"
-bt_bencode = "0.8.2"
-libc = "0.2"
-rayon = "1"
-serde = "1.0.228"
-serde_derive = "1.0.228"
-tree-sitter = "0.26.8"
-tree-sitter-highlight = "0.26.8"
-tree-sitter-md = { version = "0.5.3", features = ["parser"] }
-tree-sitter-zsh = "0.63.3"
-
-[dev-dependencies]
-googletest = "0.14.2"
-tempfile = "3"
-
-[[bin]]
-name = "daemon"
-path = "src/main.rs"
 
 [profile.release]
 debug = true

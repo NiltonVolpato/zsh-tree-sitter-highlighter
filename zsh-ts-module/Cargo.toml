@@ -7,5 +7,5 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-zsh-tree-sitter-highlighter = { path = ".." }
+zsh-tree-sitter-highlighter = { path = "../zsh-ts-highlighter" }
 zsh-module = { git = "https://github.com/NiltonVolpato/zsh-module.git" }
