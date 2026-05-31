@@ -1,64 +1,111 @@
 # zsh-tree-sitter-highlighter
 
-A Zsh shell syntax highlighter daemon using tree-sitter for multi-language prompt highlighting.
+A Zsh shell syntax highlighter using tree-sitter for prompt highlighting.
 
 ## Features
 
-- **Shell mode** (`tree-sitter-zsh`): zsh grammar with dynamic callable/path validation
+- **Shell mode** (`tree-sitter-zsh`): zsh grammar with dynamic command/path validation
 - **Markdown mode** (`tree-sitter-md`): CommonMark/GFM highlighting via split block/inline parsers
-- **Daemon architecture**: Unix socket protocol for low-latency highlighting on every keystroke
-- **Hardcoded Tokyonight theme**: ANSI colors mapped to standard tree-sitter capture names
+- **Zsh module architecture**: Native zsh module written in Rust — no daemon, no sockets, no IPC
+- **Incremental-friendly**: Parser state can be persisted across keystrokes (future optimization)
+- **Tokyonight theme**: ANSI colors mapped to standard tree-sitter capture names
+
+## Architecture
+
+This project consists of:
+
+- **`zsh-ts-highlighter/`**: Core Rust library with tree-sitter parsing and highlighting logic
+- **`zsh-ts-module/`**: Zsh module (Rust `cdylib`) that integrates the highlighter directly into zsh
+
+The module reads `BUFFER` and `PREBUFFER` directly via zsh's parameter API, performs tree-sitter highlighting, validates commands against zsh's internal hash tables, and writes `region_highlight` entries — all without leaving the zsh process.
 
 ## Dependencies
 
 - Rust toolchain (2024 edition)
-- Zsh with `zsh/net/socket` module
+- Zsh with `add-zle-hook-widget` support (standard in modern zsh)
 - `tree-sitter`, `tree-sitter-highlight`, `tree-sitter-zsh`, `tree-sitter-md`
 
-## Installation
+## Build
 
 ```bash
-cargo install --path .
+cargo build -p zsh-ts-module
 ```
+
+On macOS, the build produces `libzsh_ts_module.dylib`. The activation script automatically creates the `zsh_ts_module.bundle` symlink that zsh expects.
 
 ## Setup
 
 Add to your `.zshrc`:
 
-```bash
-eval "$(zsh-tree-sitter-highlighter activate)"
+```zsh
+source /path/to/zsh-tree-sitter-highlighter/zsh-ts-module/activate.zsh
 ```
 
-This starts the daemon (if not running) and registers a ZLE hook for `line-pre-redraw`.
+This single command:
+1. Finds the compiled module (debug or release)
+2. Creates the macOS `.bundle` symlink if needed
+3. Loads the module via `zmodload`
+4. Sets the default theme if you haven't configured one
+5. Registers the `line-pre-redraw` ZLE hook
 
-## Environment Variables
+### Manual Setup (without activate.zsh)
 
-- `ZSH_TS_HIGHLIGHTER_MODE`: Controls the language mode. Set to `zsh` (default) or `md`/`markdown` to switch prompt highlighting.
+If you prefer to set things up manually:
 
-## CLI Commands
+```zsh
+# Path to the directory containing libzsh_ts_module.*
+module_path+=(/path/to/zsh-tree-sitter-highlighter/target/debug)
+zmodload zsh_ts_module
 
-```bash
-zsh-tree-sitter-highlighter activate   # Print Zsh integration script
-zsh-tree-sitter-highlighter start      # Start the daemon
-zsh-tree-sitter-highlighter stop       # Stop the daemon
-zsh-tree-sitter-highlighter status     # Check daemon status
-zsh-tree-sitter-highlighter highlight  # One-shot highlight (for testing)
+# Optional: customize the theme
+typeset -gA _ZSH_TS_HIGHLIGHTER_THEME=(
+    [comment]="fg=#565f89"
+    [function]="fg=#7aa2f7"
+    [string]="fg=#e0af68"
+    [variable]="fg=#bb9af7"
+    [command.invalid]="fg=#f7768e"
+)
+
+# Source the integration script (registers the ZLE hook)
+source /path/to/zsh-tree-sitter-highlighter/zsh-ts-module/zsh-integration.zsh
 ```
 
-## Inline Theme Capture Names
+## Theme Customization
 
-The hardcoded theme covers at minimum:
+The theme is an associative array mapping tree-sitter capture names to zsh `region_highlight` attributes:
 
-- `keyword`, `string`, `comment`, `function`, `variable`, `number`, `operator`, `constant`, `type`, `property`
-- `punctuation.*`, `markup.heading`, `markup.strong`, `markup.italic`, `markup.link`, `markup.raw`, `markup.list`, `markup.list.checked`, `markup.list.unchecked`
+| Capture Name | Default |
+|-------------|---------|
+| `comment` | `fg=#565f89` |
+| `function` | `fg=#7aa2f7` |
+| `string` | `fg=#e0af68` |
+| `variable` | `fg=#bb9af7` |
+| `command.invalid` | `fg=#f7768e` |
+| `keyword` | `fg=#c099ff` |
+| `number` | `fg=#ff9e64` |
+| `operator` | `fg=#89ddff` |
 
-Future versions will support external TOML theme files.
+Set `_ZSH_TS_HIGHLIGHTER_THEME` **before** sourcing `activate.zsh` to override defaults.
 
-## Version 2 Roadmap
+## Testing
 
-1. **`@[file]` dynamic highlighting in markdown mode**: Detect `@[...]` patterns, validate file existence, and apply underline/red spans.
-2. **External theme files / theme conversion**: Add a TOML theme format and ideally an automatic converter from neovim Lua themes.
+```bash
+# Run the expect-based integration test
+cd zsh-ts-module
+expect test-activate.expect
+```
+
+Or test manually:
+
+```bash
+cargo build -p zsh-ts-module
+source zsh-ts-module/activate.zsh
+echo hello  # type this interactively; you should see syntax highlighting
+```
+
+## Legacy Daemon Mode
+
+The original implementation used a Unix socket daemon with bencode IPC. This code still exists in `zsh-ts-highlighter/src/daemon.rs` but is no longer the recommended approach. The module architecture is simpler, faster, and requires no background process management.
 
 ## License
 
-MIT
