@@ -3,51 +3,20 @@ use zsh_module::zsh_module;
 #[zsh_module]
 mod zsh_ts_module {
     use std::collections::HashMap;
-    use std::ffi::CString;
 
     use zsh_module::env::ParamSetValue;
-    use zsh_module::zsh;
     use zsh_module::{Association, EnvAccess, Termination};
     use zsh_tree_sitter_highlighter::highlight::{HighlightEngine, LanguageConfig, Span};
 
     // ---------------------------------------------------------------------------
-    // Direct O(1) hash table lookups via zsh-sys
+    // Helper: validate commands using the high-level Zsh table APIs
     // ---------------------------------------------------------------------------
 
-    fn is_in_hashtable(table: zsh::HashTable, name: &str) -> bool {
-        let cname = match CString::new(name) {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-        unsafe {
-            let metafied = zsh::ztrdup_metafy(cname.as_ptr());
-            if metafied.is_null() {
-                return false;
-            }
-            let node = (*table).getnode.unwrap()(table, metafied);
-            zsh::zsfree(metafied);
-            !node.is_null()
-        }
-    }
-
-    fn is_command(name: &str) -> bool {
-        unsafe { is_in_hashtable(*zsh::cmdnamtab(), name) }
-    }
-
-    fn is_function(name: &str) -> bool {
-        unsafe { is_in_hashtable(*zsh::shfunctab(), name) }
-    }
-
-    fn is_builtin(name: &str) -> bool {
-        unsafe { is_in_hashtable(*zsh::builtintab(), name) }
-    }
-
-    fn is_alias(name: &str) -> bool {
-        unsafe { is_in_hashtable(*zsh::aliastab(), name) }
-    }
-
-    fn is_valid_command(name: &str) -> bool {
-        is_command(name) || is_function(name) || is_builtin(name) || is_alias(name)
+    fn is_valid_command(env: &zsh_module::Env, name: &str) -> bool {
+        env.commands().contains_key(name)
+            || env.functions().contains_key(name)
+            || env.builtins().contains_key(name)
+            || env.aliases().contains_key(name)
     }
 
     // ---------------------------------------------------------------------------
@@ -197,7 +166,7 @@ mod zsh_ts_module {
                 match engine.extract_zsh_commands(&full_source) {
                     Ok(commands) => {
                         for (start, end, name) in commands {
-                            if !is_valid_command(&name) {
+                            if !is_valid_command(&env, &name) {
                                 spans.push(Span {
                                     start,
                                     end,
