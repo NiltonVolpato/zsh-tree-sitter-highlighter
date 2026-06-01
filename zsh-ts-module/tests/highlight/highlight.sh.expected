@@ -1,0 +1,15 @@
+=== test_invalid_command ===
+region: 0 21 fg=#7aa2f7
+region: 0 21 fg=#f7768e,bold
+
+=== test_prebuffer ===
+region: 0 4 fg=#7aa2f7
+
+=== test_simple_command ===
+region: 0 4 fg=#7aa2f7
+region: 11 20 fg=#565f89
+
+=== test_variable ===
+region: 0 4 fg=#7aa2f7
+region: 5 10 fg=#e0af68
+

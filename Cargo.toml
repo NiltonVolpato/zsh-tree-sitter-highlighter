@@ -1,9 +1,3 @@
 [workspace]
 members = ["zsh-ts-highlighter", "zsh-ts-module"]
 resolver = "3"
-
-[patch."https://github.com/zsh-rs/zsh-sys.git"]
-zsh-sys = { git = "https://github.com/NiltonVolpato/zsh-sys.git" }
-
-[profile.release]
-debug = true
