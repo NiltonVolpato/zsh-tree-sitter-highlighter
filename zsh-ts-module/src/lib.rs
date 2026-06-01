@@ -57,7 +57,7 @@ mod zsh_ts_module {
     #[zsh_component]
     #[derive(Default)]
     pub struct Highlighter {
-        engine: std::panic::AssertUnwindSafe<Option<HighlightEngine>>,
+        engine: Option<HighlightEngine>,
     }
 
     impl std::fmt::Debug for Highlighter {
@@ -92,7 +92,7 @@ mod zsh_ts_module {
                             return Ok(());
                         }
                     };
-                    *self.engine = Some(e);
+                    self.engine = Some(e);
                     self.engine.as_mut().unwrap()
                 }
             };
