@@ -43,6 +43,5 @@ EOF
     print -P "%B‣ Starting a subshell. Run 'exit' (Ctrl-D) to return.%b"
     print
     ZDOTDIR="${temp_dir}" zsh -i
-    rm "${temp_dir}/.zshrc"
-    rmdir "${temp_dir}"
+    rm -rf "${temp_dir}/"
 } "$@" || return $?

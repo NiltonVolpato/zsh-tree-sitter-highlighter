@@ -4,8 +4,21 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[dependencies]
+expectrl = "0.8"
+regex = "1.10"
+
 [dev-dependencies]
+zsh-ts-module = { path = "../zsh-ts-module" }
 
 [[test]]
 name = "tautology"
 path = "tautology.rs"
+
+[[test]]
+name = "zle"
+path = "zle.rs"
+
+[[bin]]
+name = "debug_zle"
+path = "src/bin/debug_zle.rs"
