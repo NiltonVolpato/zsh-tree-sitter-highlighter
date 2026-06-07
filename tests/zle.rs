@@ -122,7 +122,7 @@ fn read_available(session: &mut OsSession) -> String {
     result
 }
 
-const PROMPT: &str = "READY_PROMPT ";
+const PROMPT: &str = "READY % ";
 
 #[test]
 fn test_zle_end_to_end_highlighting() {
@@ -136,7 +136,7 @@ fn test_zle_end_to_end_highlighting() {
     let temp_dir = tempfile::tempdir().unwrap();
     let zshrc_content = format!(
         r#"
-PROMPT='{}'
+PROMPT='READY %% '
 module_path+=({:?})
 zmodload zsh_ts_module
 zmodload zsh/zle
@@ -147,7 +147,7 @@ zle -N abort_command; bindkey "^G" abort_command
 rehash
 hash uname
     "#,
-        PROMPT, target_debug, integration_script, theme_path
+        target_debug, integration_script, theme_path
     );
     let zshrc_path = temp_dir.path().join(".zshrc");
     std::fs::write(&zshrc_path, zshrc_content).unwrap();
@@ -171,14 +171,17 @@ hash uname
 
     // Helper closure to assert ZLE highlighting markup
     let assert_highlight = |session: &mut OsSession, buffer: &str, expected_markup: &str| {
-        // Sleep and purge
-        std::thread::sleep(Duration::from_millis(50));
-        let _ = read_available(session);
+        // Send input buffer and Ctrl-L (redraw) + Ctrl-G (custom ZLE widget)
+        session.send(buffer).unwrap();
+        session.send(b"\x0c").unwrap();
+        session.send(b"\x07").unwrap();
 
-        // Send input buffer and Ctrl-L (redraw)
-        session.write_all(buffer.as_bytes()).unwrap();
-        session.write_all(b"\x0c").unwrap();
-        session.flush().unwrap();
+        let captures = session.expect(Regex(PROMPT)).unwrap();
+        println!(
+            "CAPTURED FOR {:?}:\n{:?}",
+            buffer,
+            String::from_utf8_lossy(captures.before()),
+        );
 
         // Wait for ZLE redraw to finish rendering
         std::thread::sleep(Duration::from_millis(200));
