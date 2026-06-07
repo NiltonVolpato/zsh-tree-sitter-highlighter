@@ -933,6 +933,7 @@ version = "0.0.0"
 dependencies = [
  "expectrl",
  "regex",
+ "tempfile",
  "zsh-ts-module",
 ]
 

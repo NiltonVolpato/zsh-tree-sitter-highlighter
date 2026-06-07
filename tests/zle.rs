@@ -36,7 +36,7 @@ fn color_to_tag(color: u8) -> &'static str {
 }
 
 fn parse_zle_highlight(stream: &str) -> String {
-    let prompt = "READY_PROMPT ";
+    let prompt = PROMPT;
     let idx = match stream.rfind(prompt) {
         Some(i) => i + prompt.len(),
         None => 0,
@@ -104,29 +104,6 @@ fn parse_zle_highlight(stream: &str) -> String {
     result.trim().to_string()
 }
 
-fn expect_pattern(session: &mut OsSession, pattern: &str, timeout: Duration) -> Vec<u8> {
-    let deadline = std::time::Instant::now() + timeout;
-    let needle = Regex(pattern);
-    loop {
-        match session.check(&needle) {
-            Ok(captures) if !captures.is_empty() => {
-                let mut data = captures.before().to_vec();
-                if let Some(mat) = captures.get(0) {
-                    data.extend_from_slice(mat);
-                }
-                return data;
-            }
-            Ok(_) => {
-                if std::time::Instant::now() >= deadline {
-                    panic!("Timeout waiting for pattern: {:?}", pattern);
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(e) => panic!("Error checking pattern: {:?}", e),
-        }
-    }
-}
-
 fn read_available(session: &mut OsSession) -> String {
     let mut result = String::new();
     loop {
@@ -145,6 +122,8 @@ fn read_available(session: &mut OsSession) -> String {
     result
 }
 
+const PROMPT: &str = "READY_PROMPT ";
+
 #[test]
 fn test_zle_end_to_end_highlighting() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -153,11 +132,30 @@ fn test_zle_end_to_end_highlighting() {
     let theme_path = manifest_dir.join("highlight/test_ansidecode_theme.toml");
     let integration_script = workspace_root.join("zsh-ts-module/zsh-integration.zsh");
 
-    // Spawn Zsh with TERM=xterm-256color set in environment at startup
+    // Use ZDOTDIR trick to load prompt and module automatically
+    let temp_dir = tempfile::tempdir().unwrap();
+    let zshrc_content = format!(
+        r#"
+PROMPT='{}'
+module_path+=({:?})
+zmodload zsh_ts_module
+zmodload zsh/zle
+source {:?}
+typeset -g _ZSH_TS_HIGHLIGHTER_THEME={:?}
+abort_command() {{ zle -I; BUFFER="" }}
+zle -N abort_command; bindkey "^G" abort_command
+rehash
+hash uname
+    "#,
+        PROMPT, target_debug, integration_script, theme_path
+    );
+    let zshrc_path = temp_dir.path().join(".zshrc");
+    std::fs::write(&zshrc_path, zshrc_content).unwrap();
+
     let mut cmd = Command::new("zsh");
-    cmd.arg("-df");
+    cmd.arg("-d"); // user rc files in ZDOTDIR still run
     cmd.env("TERM", "xterm-256color");
-    cmd.env("PROMPT", "READY_PROMPT ");
+    cmd.env("ZDOTDIR", temp_dir.path());
 
     let mut session = Session::spawn(cmd).expect("Failed to spawn zsh");
     session.set_echo(false).expect("Failed to set echo");
@@ -168,39 +166,8 @@ fn test_zle_end_to_end_highlighting() {
         .set_window_size(80, 24)
         .expect("Failed to set window size");
 
-    session.expect(Regex("READY_PROMPT ")).unwrap();
-
-    session
-        .send_line(format!("module_path+=({:?})", target_debug))
-        .unwrap();
-    session.expect(Regex("READY_PROMPT ")).unwrap();
-
-    session.write_all(b"zmodload zsh_ts_module\r").unwrap();
-    session.flush().unwrap();
-    expect_pattern(&mut session, "READY_PROMPT ", Duration::from_secs(2));
-
-    // Source integration script
-    let cmd_src = format!("source {:?}\r", integration_script.to_str().unwrap());
-    session.write_all(cmd_src.as_bytes()).unwrap();
-    session.flush().unwrap();
-    expect_pattern(&mut session, "READY_PROMPT ", Duration::from_secs(2));
-
-    // Set theme path
-    let cmd_theme = format!(
-        "typeset -g _ZSH_TS_HIGHLIGHTER_THEME={:?}\r",
-        theme_path.to_str().unwrap()
-    );
-    session.write_all(cmd_theme.as_bytes()).unwrap();
-    session.flush().unwrap();
-    expect_pattern(&mut session, "READY_PROMPT ", Duration::from_secs(2));
-
-    // Rehash & Workaround
-    session.write_all(b"rehash\r").unwrap();
-    session.flush().unwrap();
-    expect_pattern(&mut session, "READY_PROMPT ", Duration::from_secs(2));
-    session.write_all(b"hash uname\r").unwrap();
-    session.flush().unwrap();
-    expect_pattern(&mut session, "READY_PROMPT ", Duration::from_secs(2));
+    // Wait for the prompt which confirms Zsh initialized and loaded everything
+    session.expect(Regex(PROMPT)).unwrap();
 
     // Helper closure to assert ZLE highlighting markup
     let assert_highlight = |session: &mut OsSession, buffer: &str, expected_markup: &str| {
@@ -223,7 +190,7 @@ fn test_zle_end_to_end_highlighting() {
         // Cancel line with Ctrl-C to clear buffer and sync back to prompt
         session.write_all(b"\x03").unwrap();
         session.flush().unwrap();
-        expect_pattern(session, "READY_PROMPT ", Duration::from_secs(2));
+        session.expect(Regex(PROMPT)).unwrap();
 
         let parsed = parse_zle_highlight(&captured);
         assert_eq!(
