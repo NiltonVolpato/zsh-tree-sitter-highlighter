@@ -33,38 +33,34 @@ cargo build -p zsh-ts-module
 
 On macOS, the build produces `libzsh_ts_module.dylib`. The activation script automatically creates the `zsh_ts_module.bundle` symlink that zsh expects.
 
-## Setup
+## Installation & Setup
 
-Add to your `.zshrc`:
+For regular use, run the installer:
 
-```zsh
-source /path/to/zsh-tree-sitter-highlighter/zsh-ts-module/activate.zsh
+```bash
+./install.sh
 ```
 
-This single command:
-1. Finds the compiled module (debug or release)
-2. Creates the macOS `.bundle` symlink if needed
-3. Loads the module via `zmodload`
-4. Sets the default theme if you haven't configured one
-5. Registers the `line-pre-redraw` ZLE hook
+Follow the prompts to specify the installation directory. The script compiles the module in release mode and copies the necessary files.
 
-### Manual Setup (without activate.zsh)
+After the installer finishes, add the following lines to your `~/.zshrc`:
 
-If you prefer to set things up manually:
+```zsh
+module_path+=("$HOME/.local/share/zsh-tree-sitter-highlighter")
+zmodload zsh_ts_module
+source "$HOME/.local/share/zsh-tree-sitter-highlighter/zsh-integration.zsh"
+```
+
+*(Adjust the path if you chose a custom installation directory)*
+
+### Manual Setup (From Source)
+
+If you prefer to load it directly from your build target directory:
 
 ```zsh
 # Path to the directory containing libzsh_ts_module.*
-module_path+=(/path/to/zsh-tree-sitter-highlighter/target/debug)
+module_path+=(/path/to/zsh-tree-sitter-highlighter/target/release)
 zmodload zsh_ts_module
-
-# Optional: customize the theme
-typeset -gA _ZSH_TS_HIGHLIGHTER_THEME=(
-    [comment]="fg=#565f89"
-    [function]="fg=#7aa2f7"
-    [string]="fg=#e0af68"
-    [variable]="fg=#bb9af7"
-    [command.invalid]="fg=#f7768e"
-)
 
 # Source the integration script (registers the ZLE hook)
 source /path/to/zsh-tree-sitter-highlighter/zsh-ts-module/zsh-integration.zsh
@@ -85,22 +81,21 @@ The theme is an associative array mapping tree-sitter capture names to zsh `regi
 | `number` | `fg=#ff9e64` |
 | `operator` | `fg=#89ddff` |
 
-Set `_ZSH_TS_HIGHLIGHTER_THEME` **before** sourcing `activate.zsh` to override defaults.
+Set `_ZSH_TS_HIGHLIGHTER_THEME` before loading the module to override defaults.
 
-## Testing
+## Testing & Development
+
+To compile the module and start an interactive testing shell:
 
 ```bash
-# Run the expect-based integration test
-cd zsh-ts-module
-expect test-activate.expect
+./scripts/dev-build.zsh [--release|--debug]
 ```
 
-Or test manually:
+To run the expect-based integration tests:
 
 ```bash
-cargo build -p zsh-ts-module
-source zsh-ts-module/activate.zsh
-echo hello  # type this interactively; you should see syntax highlighting
+expect zsh-ts-module/test-activate.expect
+expect zsh-ts-module/test-highlight.expect
 ```
 
 ## Legacy Daemon Mode

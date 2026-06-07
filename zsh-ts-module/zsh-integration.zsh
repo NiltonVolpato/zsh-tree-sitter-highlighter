@@ -30,3 +30,33 @@ function _zsh_ts_highlighter() {
 
 autoload -U add-zle-hook-widget
 add-zle-hook-widget line-pre-redraw _zsh_ts_highlighter
+
+# Set default theme if user hasn't configured one
+if (( ! ${+_ZSH_TS_HIGHLIGHTER_THEME} )); then
+    typeset -gA _ZSH_TS_HIGHLIGHTER_THEME=(
+        [comment]="fg=#565f89"
+        [constant]="fg=#ff5370"
+        [embedded]="fg=#73daca"
+        [function]="fg=#7aa2f7"
+        [keyword]="fg=#c099ff"
+        [number]="fg=#ff9e64"
+        [operator]="fg=#89ddff"
+        [property]="fg=#73daca"
+        [string]="fg=#e0af68"
+        [text.emphasis]="fg=#c099ff"
+        [text.literal]="fg=#e0af68"
+        [text.reference]="fg=#7aa2f7"
+        [text.strong]="fg=#c099ff"
+        [text.title]="fg=#7aa2f7"
+        [text.uri]="fg=#73daca"
+        [punctuation.delimiter]="fg=#89ddff"
+        [punctuation.special]="fg=#89ddff"
+        [string.escape]="fg=#ff5370"
+        [none]=""
+        [path]="underline"
+        [path.directory]="fg=#7aa2f7,underline"
+        [command.invalid]="fg=#f7768e"
+        [variable]="fg=#bb9af7"
+    )
+fi
+
