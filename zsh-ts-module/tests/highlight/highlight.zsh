@@ -6,6 +6,11 @@ setup() {
       return 1
   }
   typeset -g _ZSH_TS_HIGHLIGHTER_THEME="tests/highlight/test_theme.toml"
+  rehash
+  # FIXME: This hash call shouldn't be needed, but it works around a bug in
+  # zsh-module's CommandsTable::contains_key implementation (which returns
+  # false for commands that exist in cmdnamtab but haven't been resolved yet).
+  hash uname
 }
 
 test_simple_command() {

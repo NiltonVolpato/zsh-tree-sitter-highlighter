@@ -1,0 +1,40 @@
+"command.invalid" = { fg = "red", modifiers = ["bold"] }
+"comment" = { fg = "light-gray", modifiers = ["italic"] }
+"constant" = { fg = "yellow" }
+"embedded" = { fg = "ui-text" }
+"function" = { fg = "blue" }
+"keyword" = { fg = "purple" }
+"number" = { fg = "orange" }
+"operator" = { fg = "ui-text" }
+"path" = { modifiers = ["underline"] }
+"path.directory" = { fg = "ui-text", modifiers = ["underline"] }
+"property" = { fg = "red" }
+"punctuation.delimiter" = { fg = "ui-text" }
+"punctuation.special" = { fg = "ui-text" }
+"string" = { fg = "green" }
+"string.escape" = { fg = "yellow" }
+"text.emphasis" = { fg = "purple", modifiers = ["italic"] }
+"text.literal" = { fg = "green" }
+"text.reference" = { fg = "purple" }
+"text.strong" = { fg = "yellow", modifiers = ["bold"] }
+"text.title" = { fg = "red" }
+"text.uri" = { fg = "cyan", modifiers = ["underlined"] }
+"variable" = { fg = "ui-text" }
+
+[palette]
+black = "#282c33"
+blue = "#73ade9"
+blue-gray = "#5a6f89"
+cyan = "#6eb4bf"
+faint-gray = "#3B4048"
+gray = "#2f343e"
+green = "#a1c181"
+light-gray = "#5d636f"
+linenr = "#5d636f"
+orange = "#bf956a"
+purple = "#b477cf"
+red = "#d07277"
+ui-text = "#c8ccd4"
+ui-text-reversed = "#282c33"
+white = "#c8ccd4"
+yellow = "#dfc184"

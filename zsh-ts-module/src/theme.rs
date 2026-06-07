@@ -84,43 +84,10 @@ fn get_style(
     styles: &HashMap<String, StyleValue>,
     palette: &HashMap<String, String>,
 ) -> Option<String> {
-    // Look up directly in styles
     if let Some(val) = styles.get(capture_name) {
-        if let Some(style_str) = translate_style(val, palette) {
-            return Some(style_str);
-        }
-    }
-
-    // Handle custom/override fallbacks if not resolved by theme
-    match capture_name {
-        "command.invalid" => {
-            if let Some(val) = styles.get("error") {
-                translate_style(val, palette)
-            } else {
-                None
-            }
-        }
-        "path" => {
-            Some("underline".to_string())
-        }
-        "path.directory" => {
-            let mut parts = vec!["underline".to_string()];
-            for dir_key in &["ui.text.directory", "function", "blue"] {
-                if let Some(val) = styles.get(*dir_key) {
-                    if let Some(style_str) = translate_style(val, palette) {
-                        for component in style_str.split(',') {
-                            if component.starts_with("fg=") {
-                                parts.push(component.to_string());
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-            Some(parts.join(","))
-        }
-        _ => None,
+        translate_style(val, palette)
+    } else {
+        None
     }
 }
 
@@ -224,7 +191,7 @@ mod tests {
         assert_eq!(cache.get("function").unwrap(), "fg=#61AFEF");
         assert_eq!(cache.get("command.invalid").unwrap(), "fg=#E06C75,bold");
         assert_eq!(cache.get("path").unwrap(), "underline");
-        assert_eq!(cache.get("path.directory").unwrap(), "underline,fg=#61AFEF");
+        assert_eq!(cache.get("path.directory").unwrap(), "fg=#61AFEF,underline");
     }
 
     #[test]
@@ -299,6 +266,60 @@ mod tests {
                     "Theme '{}' has overlapping styles for 'function' and 'embedded': '{}'",
                     theme_name, f
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_themes_do_not_contain_unused_styles() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let themes_dir = std::path::Path::new(&manifest_dir).join("themes");
+
+        let allowed_styles: std::collections::HashSet<&str> = [
+            "comment",
+            "constant",
+            "embedded",
+            "function",
+            "keyword",
+            "number",
+            "operator",
+            "property",
+            "punctuation.delimiter",
+            "punctuation.special",
+            "string",
+            "string.escape",
+            "text.emphasis",
+            "text.literal",
+            "text.reference",
+            "text.strong",
+            "text.title",
+            "text.uri",
+            "variable",
+            "command.invalid",
+            "path",
+            "path.directory",
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        let entries = std::fs::read_dir(themes_dir).unwrap();
+        for entry in entries {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
+                let content = std::fs::read_to_string(&path).unwrap();
+                let theme: Theme = toml::from_str(&content).unwrap_or_else(|e| {
+                    panic!("failed to parse theme '{}': {}", path.display(), e);
+                });
+                for key in theme.styles.keys() {
+                    assert!(
+                        allowed_styles.contains(key.as_str()),
+                        "Theme file '{}' contains unused/unsupported style key '{}'",
+                        path.file_name().unwrap().to_str().unwrap(),
+                        key
+                    );
+                }
             }
         }
     }

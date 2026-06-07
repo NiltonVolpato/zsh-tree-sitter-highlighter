@@ -69,51 +69,88 @@ fn load_theme_recursive(path: &Path, depth: usize) -> Result<Theme, String> {
 
 fn get_lookup_keys(capture_name: &str) -> Vec<String> {
     let mut keys = Vec::new();
-    keys.push(capture_name.to_string());
 
     match capture_name {
         "text.title" => {
-            keys.push("markup.heading".to_string());
             keys.push("markup.heading.1".to_string());
+            keys.push("markup.heading".to_string());
+            keys.push("ui.text".to_string());
+            keys.push("variable".to_string());
         }
         "text.strong" => {
             keys.push("markup.bold".to_string());
+            keys.push("ui.text".to_string());
+            keys.push("variable".to_string());
         }
         "text.emphasis" => {
             keys.push("markup.italic".to_string());
+            keys.push("ui.text".to_string());
+            keys.push("variable".to_string());
         }
         "text.literal" => {
             keys.push("markup.raw".to_string());
+            keys.push("string".to_string());
         }
         "text.reference" => {
             keys.push("markup.link.text".to_string());
+            keys.push("variable".to_string());
         }
         "text.uri" => {
             keys.push("markup.link.url".to_string());
+            keys.push("constant".to_string());
         }
         "punctuation.delimiter" => {
-            keys.push("punctuation".to_string());
+            keys.push("punctuation.delimiter".to_string());
+            keys.push("ui.text".to_string());
+            keys.push("variable".to_string());
         }
         "punctuation.special" => {
             keys.push("special".to_string());
-            keys.push("punctuation".to_string());
+            keys.push("punctuation.special".to_string());
+            keys.push("ui.text".to_string());
+            keys.push("variable".to_string());
         }
         "string.escape" => {
             keys.push("constant.character.escape".to_string());
-            keys.push("constant".to_string());
+            keys.push("string.escape".to_string());
         }
         "embedded" => {
             keys.push("special".to_string());
-        }
-        "property" => {
+            keys.push("embedded".to_string());
             keys.push("variable".to_string());
         }
-        "number" => {
-            keys.push("constant".to_string());
+        "property" => {
+            keys.push("variable.other.member".to_string());
+            keys.push("property".to_string());
         }
-        _ => {}
+        "number" => {
+            keys.push("constant.numeric".to_string());
+            keys.push("number".to_string());
+        }
+        "variable" => {
+            keys.push("variable".to_string());
+            keys.push("ui.text".to_string());
+        }
+        _ => {
+            keys.push(capture_name.to_string());
+        }
     }
     keys
+}
+
+fn resolve_hierarchical_style(theme: &Theme, key: &str) -> Option<StyleValue> {
+    let mut current = key.to_string();
+    loop {
+        if let Some(val) = theme.styles.get(&current) {
+            return Some(val.clone());
+        }
+        if let Some(pos) = current.rfind('.') {
+            current = current[..pos].to_string();
+        } else {
+            break;
+        }
+    }
+    None
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -129,7 +166,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Load the theme with full inheritance resolved
     let theme = load_theme_recursive(&input_path, 0)?;
 
-    // 2. Perform fuzzy lookups for all required captures
+    // 2. Perform lookups for all required captures
     let all_captures = [
         "comment",
         "constant",
@@ -156,28 +193,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for capture in &all_captures {
         let keys = get_lookup_keys(capture);
         for key in keys {
-            if let Some(val) = theme.styles.get(&key) {
+            if let Some(val) = resolve_hierarchical_style(&theme, &key) {
                 output_styles.insert(capture.to_string(), val.clone());
                 break;
             }
         }
     }
 
-    // Also include custom overrides if defined
-    if let Some(val) = theme.styles.get("error") {
-        output_styles.insert("command.invalid".to_string(), val.clone());
-    }
-    if let Some(val) = theme.styles.get("ui.text.directory") {
-        output_styles.insert("path.directory".to_string(), val.clone());
+    // Differentiate embedded (subshells) from function (commands) if they overlap
+    if let (Some(embed_val), Some(func_val)) = (output_styles.get("embedded"), output_styles.get("function")) {
+        let embed_str = toml::to_string(embed_val).unwrap_or_default();
+        let func_str = toml::to_string(func_val).unwrap_or_default();
+        if embed_str == func_str {
+            // Find another color to use for embedded
+            if let Some(alt_val) = resolve_hierarchical_style(&theme, "constant")
+                .or_else(|| resolve_hierarchical_style(&theme, "string"))
+            {
+                output_styles.insert("embedded".to_string(), alt_val.clone());
+            }
+        }
     }
 
-    // 3. Serialize to TOML, preserving palette block
+    // 3. Custom overrides
+    if let Some(val) = resolve_hierarchical_style(&theme, "error")
+        .or_else(|| resolve_hierarchical_style(&theme, "diagnostic.error"))
+    {
+        output_styles.insert("command.invalid".to_string(), val.clone());
+    }
+
+    output_styles.insert(
+        "path".to_string(),
+        StyleValue::Full(Style {
+            fg: None,
+            bg: None,
+            modifiers: Some(vec!["underline".to_string()]),
+            underline: None,
+        }),
+    );
+
+    if let Some(mut val) = resolve_hierarchical_style(&theme, "ui.text.directory")
+        .or_else(|| resolve_hierarchical_style(&theme, "function"))
+    {
+        // Add "underline" modifier to path.directory style
+        match &mut val {
+            StyleValue::Simple(s) => {
+                val = StyleValue::Full(Style {
+                    fg: Some(s.clone()),
+                    bg: None,
+                    modifiers: Some(vec!["underline".to_string()]),
+                    underline: None,
+                });
+            }
+            StyleValue::Full(style) => {
+                if let Some(mods) = &mut style.modifiers {
+                    if !mods.contains(&"underline".to_string()) && !mods.contains(&"underlined".to_string()) {
+                        mods.push("underline".to_string());
+                    }
+                } else {
+                    style.modifiers = Some(vec!["underline".to_string()]);
+                }
+            }
+            StyleValue::PaletteList(_) => {}
+        }
+        output_styles.insert("path.directory".to_string(), val);
+    }
+
+    // 4. Serialize to TOML, preserving palette block
     let mut output_theme_toml = String::new();
-    
+
     // Write inherits if it was defined
     if let Some(ref inherits) = theme.inherits {
         output_theme_toml.push_str(&format!("inherits = \"{}\"\n\n", inherits));
     }
+
+    // Write the flat styles matching our 1-to-1 keys
+    let mut sorted_styles: Vec<_> = output_styles.iter().collect();
+    sorted_styles.sort_by_key(|(k, _)| *k);
+    for (k, val) in sorted_styles {
+        let toml_val = toml::Value::try_from(val)?;
+        output_theme_toml.push_str(&format!("\"{}\" = {}\n", k, toml_val));
+    }
+    output_theme_toml.push_str("\n");
 
     // Write palette block if it was defined
     if !theme.palette.is_empty() {
@@ -187,15 +283,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for (k, v) in sorted_palette {
             output_theme_toml.push_str(&format!("{} = \"{}\"\n", k, v));
         }
-        output_theme_toml.push_str("\n");
-    }
-
-    // Write the flat styles matching our 1-to-1 keys
-    let mut sorted_styles: Vec<_> = output_styles.iter().collect();
-    sorted_styles.sort_by_key(|(k, _)| *k);
-    for (k, val) in sorted_styles {
-        let val_str = toml::to_string(val)?;
-        output_theme_toml.push_str(&format!("\"{}\" = {}\n", k, val_str.trim()));
     }
 
     fs::write(&output_path, output_theme_toml)?;

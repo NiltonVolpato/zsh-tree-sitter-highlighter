@@ -1,0 +1,38 @@
+"command.invalid" = { fg = "red", modifiers = ["bold"] }
+"comment" = { fg = "light-gray", modifiers = ["italic"] }
+"constant" = { fg = "cyan" }
+"embedded" = { fg = "cyan" }
+"function" = { fg = "blue" }
+"keyword" = { fg = "red" }
+"number" = { fg = "gold" }
+"operator" = { fg = "purple" }
+"path" = { modifiers = ["underline"] }
+"path.directory" = { fg = "blue", modifiers = ["underline"] }
+"property" = { fg = "red" }
+"punctuation.delimiter" = { fg = "white" }
+"punctuation.special" = { fg = "blue" }
+"string" = { fg = "green" }
+"string.escape" = { fg = "gold" }
+"text.emphasis" = { fg = "purple", modifiers = ["italic"] }
+"text.literal" = { fg = "green" }
+"text.reference" = { fg = "purple" }
+"text.strong" = { fg = "gold", modifiers = ["bold"] }
+"text.title" = { fg = "red" }
+"text.uri" = { fg = "cyan", modifiers = ["underlined"] }
+"variable" = { fg = "white" }
+
+[palette]
+black = "#282C34"
+blue = "#61AFEF"
+cyan = "#56B6C2"
+faint-gray = "#3B4048"
+gold = "#D19A66"
+gray = "#3E4452"
+green = "#98C379"
+light-black = "#2C323C"
+light-gray = "#5C6370"
+linenr = "#4B5263"
+purple = "#C678DD"
+red = "#E06C75"
+white = "#ABB2BF"
+yellow = "#E5C07B"

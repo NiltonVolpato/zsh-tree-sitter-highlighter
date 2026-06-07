@@ -20,7 +20,6 @@
 97 102 fg=variable
 108 116 fg=embedded
 110 115 fg=function
-110 115 fg=command.invalid
 
 === test_invalid_command ===
 0 21 fg=function
