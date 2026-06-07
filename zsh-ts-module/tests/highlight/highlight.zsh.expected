@@ -1,0 +1,39 @@
+=== test_complex_nesting ===
+0 4 fg=function
+5 119 fg=string
+12 104 fg=embedded
+14 22 fg=keyword
+23 27 fg=function
+32 34 fg=keyword
+40 44 fg=string
+48 52 fg=keyword
+53 57 fg=function
+58 65 fg=string
+67 71 fg=keyword
+72 76 fg=function
+77 83 fg=string
+78 82 fg=embedded
+85 87 fg=keyword
+91 95 fg=function
+91 95 fg=command.invalid
+96 103 fg=string
+97 102 fg=variable
+108 116 fg=embedded
+110 115 fg=function
+110 115 fg=command.invalid
+
+=== test_invalid_command ===
+0 21 fg=function
+0 21 fg=command.invalid
+
+=== test_prebuffer ===
+0 4 fg=function
+
+=== test_simple_command ===
+0 4 fg=function
+11 20 fg=comment
+
+=== test_variable ===
+0 4 fg=function
+5 10 fg=variable
+

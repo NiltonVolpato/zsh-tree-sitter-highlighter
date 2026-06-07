@@ -1,5 +1,7 @@
 use zsh_module::zsh_module;
 
+mod theme;
+
 #[zsh_module]
 mod zsh_ts_module {
     use std::collections::HashMap;
@@ -27,11 +29,16 @@ mod zsh_ts_module {
     #[derive(Default)]
     pub struct Highlighter {
         engine: Option<HighlightEngine>,
+        theme_path: Option<String>,
+        theme_cache: HashMap<String, String>,
     }
 
     impl std::fmt::Debug for Highlighter {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("Highlighter").finish()
+            f.debug_struct("Highlighter")
+                .field("theme_path", &self.theme_path)
+                .field("theme_cache_len", &self.theme_cache.len())
+                .finish()
         }
     }
 
@@ -93,7 +100,7 @@ mod zsh_ts_module {
                 _ => LanguageConfig::Zsh,
             };
 
-            // Read theme associative array.
+            // Read theme path.
             let theme_param = match env.get("_ZSH_TS_HIGHLIGHTER_THEME") {
                 Ok(p) => p,
                 Err(_) => {
@@ -107,42 +114,45 @@ mod zsh_ts_module {
                 }
             };
 
-            let theme = match theme_param.as_association() {
-                Ok(view) => {
-                    let result: std::result::Result<HashMap<String, String>, _> = view
-                        .iter()
-                        .map(|r| r.map(|(k, v)| (k.to_string(), v.to_string())))
-                        .collect();
-                    match result {
-                        Ok(t) => t,
-                        Err(_) => {
-                            let _ = env.set(
-                                "_zsh_ts_error",
-                                ParamSetValue::Scalar("_ZSH_TS_HIGHLIGHTER_THEME parsing failed"),
-                            );
-                            return Ok(());
-                        }
-                    }
-                }
+            let theme_path_str = match theme_param.as_scalar() {
+                Ok(s) => s.into_owned(),
                 Err(_) => {
                     let _ = env.set(
                         "_zsh_ts_error",
-                        ParamSetValue::Scalar(
-                            "_ZSH_TS_HIGHLIGHTER_THEME is not an associative array",
-                        ),
+                        ParamSetValue::Scalar("_ZSH_TS_HIGHLIGHTER_THEME is not a string"),
                     );
                     return Ok(());
                 }
             };
 
-            if theme.is_empty() {
+            if theme_path_str.is_empty() {
                 let _ = env.set(
                     "_zsh_ts_error",
-                    ParamSetValue::Scalar(
-                        "_ZSH_TS_HIGHLIGHTER_THEME is empty (did you source activate.zsh?)",
-                    ),
+                    ParamSetValue::Scalar("_ZSH_TS_HIGHLIGHTER_THEME is empty"),
                 );
                 return Ok(());
+            }
+
+            // Load and cache the theme if needed
+            let needs_reload = match &self.theme_path {
+                Some(cached_path) => cached_path != &theme_path_str || self.theme_cache.is_empty(),
+                None => true,
+            };
+
+            if needs_reload {
+                match crate::theme::load_theme_file(&theme_path_str) {
+                    Ok(cache) => {
+                        self.theme_cache = cache;
+                        self.theme_path = Some(theme_path_str);
+                    }
+                    Err(err) => {
+                        let _ = env.set(
+                            "_zsh_ts_error",
+                            ParamSetValue::Scalar(&format!("theme load failed: {}", err)),
+                        );
+                        return Ok(());
+                    }
+                }
             }
 
             let full_source = format!("{}{}", prebuffer, buffer);
@@ -205,7 +215,7 @@ mod zsh_ts_module {
                 if start >= end {
                     continue;
                 }
-                if let Some(style) = theme.get(&span.style) {
+                if let Some(style) = self.theme_cache.get(&span.style) {
                     regions.push(format!("{} {} {}", start, end, style));
                 }
             }

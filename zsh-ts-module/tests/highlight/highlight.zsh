@@ -5,41 +5,28 @@ setup() {
       echo "Failed to load zsh_ts_module" >&2
       return 1
   }
-  typeset -gA _ZSH_TS_HIGHLIGHTER_THEME=(
-      [comment]=fg=#565f89
-      [string]=fg=#e0af68
-      [function]=fg=#7aa2f7
-      [command.invalid]=fg=#f7768e,bold
-      [variable]=fg=#e0af68
-      [operator]=fg=#89ddff
-  )
+  typeset -g _ZSH_TS_HIGHLIGHTER_THEME="tests/highlight/test_theme.toml"
 }
 
 test_simple_command() {
   BUFFER='echo hello # comment'
   PREBUFFER=''
   zsh_ts_highlight
-  for r in "${_zsh_ts_regions[@]}"; do
-    echo "region: $r"
-  done
+  print -l "${_zsh_ts_regions[@]}"
 }
 
 test_invalid_command() {
   BUFFER='nonexistent_cmd_12345'
   PREBUFFER=''
   zsh_ts_highlight
-  for r in "${_zsh_ts_regions[@]}"; do
-    echo "region: $r"
-  done
+  print -l "${_zsh_ts_regions[@]}"
 }
 
 test_variable() {
   BUFFER='echo $HOME'
   PREBUFFER=''
   zsh_ts_highlight
-  for r in "${_zsh_ts_regions[@]}"; do
-    echo "region: $r"
-  done
+  print -l "${_zsh_ts_regions[@]}"
 }
 
 test_prebuffer() {
@@ -47,7 +34,12 @@ test_prebuffer() {
   PREBUFFER='echo hello'
   PREBUFFER=$PREBUFFER$'\n'
   zsh_ts_highlight
-  for r in "${_zsh_ts_regions[@]}"; do
-    echo "region: $r"
-  done
+  print -l "${_zsh_ts_regions[@]}"
+}
+
+test_complex_nesting() {
+  BUFFER='echo "Hello $(function name() { if [ -z "$1" ]; then echo "World"; else echo "${1}"; fi }; name "$USER") on $(uname)\!"'
+  PREBUFFER=''
+  zsh_ts_highlight
+  print -l "${_zsh_ts_regions[@]}"
 }
