@@ -1,9 +1,9 @@
-use expectrl::{Expect, Session, Regex};
+use expectrl::process::Termios;
+use expectrl::session::OsSession;
+use expectrl::{Expect, Regex, Session};
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
-use expectrl::session::OsSession;
-use expectrl::process::Termios;
 
 pub const PROMPT: &str = "READY % ";
 
@@ -64,72 +64,72 @@ pub fn tag_to_color(tag: &str) -> u8 {
 }
 
 pub fn parse_spans(stream: &str) -> (String, Vec<(usize, usize, &'static str)>) {
-    let prompt = PROMPT;
-    let idx = match stream.rfind(prompt) {
-        Some(i) => i + prompt.len(),
-        None => 0,
-    };
-    let content = &stream[idx..];
+    let content = stream;
 
-    let mut chars = content.chars().peekable();
-    let mut current_color: Option<u8> = None;
-    
+    // Filter out carriage returns and newlines
+    let filtered: String = content
+        .chars()
+        .filter(|&c| c != '\r' && c != '\n')
+        .collect();
+
+    // Regex matches any CSI escape sequence: \x1b[ <parameters> <letter>
+    let ansi_re = regex::Regex::new(r"\x1b\[([0-9;:]*)([a-zA-Z])").unwrap();
+
     let mut clean_text = String::new();
     let mut spans = Vec::new();
+    let mut last_idx = 0;
+    let mut current_color: Option<u8> = None;
     let mut current_span_start = 0;
 
-    while let Some(&c) = chars.peek() {
-        if c == '\x1b' {
-            chars.next();
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                let mut seq = String::new();
-                while let Some(&nc) = chars.peek() {
-                    if nc.is_ascii_alphabetic() {
-                        let term = nc;
-                        chars.next();
-                        
-                        if term == 'm' {
-                            let parts: Vec<&str> = if seq.contains(':') {
-                                seq.split(':').collect()
-                            } else {
-                                seq.split(';').collect()
-                            };
-                            
-                            if parts.len() >= 3 && parts[0] == "38" && parts[1] == "5" {
-                                if let Ok(val) = parts[2].parse::<u8>() {
-                                    if current_color != Some(val) {
-                                        let char_count = clean_text.chars().count();
-                                        if let Some(prev) = current_color {
-                                            spans.push((current_span_start, char_count, color_to_tag(prev)));
-                                        }
-                                        current_color = Some(val);
-                                        current_span_start = char_count;
-                                    }
-                                }
-                            } else if seq == "39" || seq == "0" || seq.is_empty() {
-                                if let Some(prev) = current_color {
-                                    let char_count = clean_text.chars().count();
-                                    spans.push((current_span_start, char_count, color_to_tag(prev)));
-                                    current_color = None;
-                                }
-                            }
-                        }
-                        break;
-                    } else {
-                        seq.push(nc);
-                        chars.next();
-                    }
-                }
-            }
+    // CSI (Control Sequence Introducer) Graphics / Color setting command
+    const SGR_COMMAND: &str = "m";
+    // SGR parameter prefix for setting 256-color foreground
+    const FG_256_COLOR_PREFIX: &str = "38";
+    const COLOR_TYPE_256: &str = "5";
+    // SGR parameter for resetting default foreground color
+    const FG_RESET: &str = "39";
+    // SGR parameter for resetting all attributes
+    const RESET_ALL: &str = "0";
+
+    for mat in ansi_re.find_iter(&filtered) {
+        let text_chunk = &filtered[last_idx..mat.start()];
+        clean_text.push_str(text_chunk);
+
+        let caps = ansi_re.captures(mat.as_str()).unwrap();
+        let params = caps.get(1).unwrap().as_str();
+        let term = caps.get(2).unwrap().as_str();
+
+        last_idx = mat.end();
+
+        if term != SGR_COMMAND {
+            continue;
+        }
+        let parts: Vec<&str> = if params.contains(':') {
+            params.split(':').collect()
         } else {
-            let nc = chars.next().unwrap();
-            if nc != '\r' && nc != '\n' {
-                clean_text.push(nc);
+            params.split(';').collect()
+        };
+
+        let next_color =
+            if parts.len() >= 3 && parts[0] == FG_256_COLOR_PREFIX && parts[1] == COLOR_TYPE_256 {
+                parts[2].parse::<u8>().ok()
+            } else if params == FG_RESET || params == RESET_ALL || params.is_empty() {
+                None
+            } else {
+                current_color
+            };
+
+        if next_color != current_color {
+            let char_count = clean_text.chars().count();
+            if let Some(prev) = current_color {
+                spans.push((current_span_start, char_count, color_to_tag(prev)));
             }
+            current_color = next_color;
+            current_span_start = char_count;
         }
     }
 
+    clean_text.push_str(&filtered[last_idx..]);
     if let Some(prev) = current_color {
         let char_count = clean_text.chars().count();
         spans.push((current_span_start, char_count, color_to_tag(prev)));
@@ -177,14 +177,14 @@ pub fn parse_zle_highlight(stream: &str) -> String {
 
 pub fn render_diagram(buffer: &str, spans: &[(usize, usize, &'static str)]) -> String {
     let chars: Vec<char> = buffer.chars().collect();
-    
+
     struct Interval {
         start: usize,
         end: usize,
         col: usize,
         label: String,
     }
-    
+
     let mut intervals = Vec::new();
     for &(start, end, tag) in spans {
         if start >= end || start >= chars.len() {
@@ -193,22 +193,27 @@ pub fn render_diagram(buffer: &str, spans: &[(usize, usize, &'static str)]) -> S
         let text: String = chars[start..end.min(chars.len())].iter().collect();
         let col = start + (end - start) / 2;
         let label = format!("{}: {:?}", tag, text);
-        intervals.push(Interval { start, end, col, label });
+        intervals.push(Interval {
+            start,
+            end,
+            col,
+            label,
+        });
     }
-    
+
     intervals.sort_by_key(|inv| inv.start);
-    
+
     let n = intervals.len();
     if n == 0 {
         return buffer.to_string();
     }
-    
+
     let mut lines = Vec::new();
-    
+
     for k in 0..n {
         let mut line = String::new();
         let target_idx = k;
-        
+
         let mut curr_col = 0;
         for j in 0..=target_idx {
             let inv_col = intervals[j].col;
@@ -216,7 +221,7 @@ pub fn render_diagram(buffer: &str, spans: &[(usize, usize, &'static str)]) -> S
                 line.push(' ');
                 curr_col += 1;
             }
-            
+
             if j == target_idx {
                 line.push_str("+- ");
                 line.push_str(&intervals[j].label);
@@ -228,7 +233,7 @@ pub fn render_diagram(buffer: &str, spans: &[(usize, usize, &'static str)]) -> S
         }
         lines.push(line);
     }
-    
+
     let mut conn_line = String::new();
     let mut curr_col = 0;
     for j in 0..n {
@@ -241,7 +246,7 @@ pub fn render_diagram(buffer: &str, spans: &[(usize, usize, &'static str)]) -> S
         curr_col += 1;
     }
     lines.push(conn_line);
-    
+
     let mut underline_line = String::new();
     let mut char_idx = 0;
     while char_idx < chars.len() {
@@ -261,7 +266,7 @@ pub fn render_diagram(buffer: &str, spans: &[(usize, usize, &'static str)]) -> S
     }
     lines.push(underline_line);
     lines.push(buffer.to_string());
-    
+
     lines.join("\n")
 }
 
@@ -269,13 +274,13 @@ pub fn print_colorized(text: &str, spans: &[(usize, usize, &'static str)]) {
     let chars: Vec<char> = text.chars().collect();
     let mut output = String::new();
     let mut curr = 0;
-    
+
     for &(start, end, tag) in spans {
         while curr < start && curr < chars.len() {
             output.push(chars[curr]);
             curr += 1;
         }
-        
+
         let color = tag_to_color(tag);
         output.push_str(&format!("\x1b[38;5;{}m", color));
         while curr < end && curr < chars.len() {
@@ -284,17 +289,19 @@ pub fn print_colorized(text: &str, spans: &[(usize, usize, &'static str)]) {
         }
         output.push_str("\x1b[0m");
     }
-    
+
     while curr < chars.len() {
         output.push(chars[curr]);
         curr += 1;
     }
-    
+
     println!("Colorized: {}", output);
 }
 
 pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string()));
+    let manifest_dir = PathBuf::from(
+        env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string()),
+    );
     let workspace_root = manifest_dir.parent().unwrap();
     let target_debug = workspace_root.join("target/debug");
     let theme_path = manifest_dir.join("highlight/test_ansidecode_theme.toml");
