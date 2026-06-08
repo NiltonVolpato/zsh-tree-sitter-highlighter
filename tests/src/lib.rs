@@ -303,16 +303,41 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
         env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string()),
     );
     let workspace_root = manifest_dir.parent().unwrap();
-    let target_debug = workspace_root.join("target/debug");
     let theme_path = manifest_dir.join("highlight/test_ansidecode_theme.toml");
-    let integration_script = workspace_root.join("zsh-ts-module/zsh-integration.zsh");
+
+    // Build the dynamic library target explicitly to ensure it exists
+    zsh_module_test::build_module(workspace_root, Some("zsh-ts-module"));
 
     let temp_dir = tempfile::tempdir().unwrap();
+    let install_dir = temp_dir.path();
+
+    // Read the compile-time target profile directory
+    let target_profile_dir = zsh_module_test::target_profile_dir();
+
+    // Run the manual installer script targeting the temp directory
+    let install_script = workspace_root.join("scripts/manual-install.sh");
+    let status = Command::new("zsh")
+        .arg(install_script)
+        .env("HOME", install_dir) // Set HOME to ZDOTDIR temp location
+        .env("ZDOTDIR", install_dir)
+        .env("INSTALL_DIR", install_dir)
+        .env("SKIP_BUILD", "1")
+        .env(
+            "CARGO_BUILD_DIR",
+            target_profile_dir
+                .strip_prefix(workspace_root)
+                .unwrap_or(&target_profile_dir),
+        )
+        .env("MODIFY_ZSHRC", "n") // Avoid interactive prompt
+        .status()
+        .expect("Failed to run manual installer script");
+    assert!(status.success(), "manual-install.sh failed");
+
+    let integration_script = install_dir.join("zsh-integration.zsh");
+
     let zshrc_content = format!(
         r#"
 PROMPT='READY %% '
-module_path+=({:?})
-zmodload zsh_ts_module
 zmodload zsh/zle
 source {:?}
 typeset -g _ZSH_TS_HIGHLIGHTER_THEME={:?}
@@ -321,7 +346,7 @@ zle -N abort_command; bindkey "^G" abort_command
 rehash
 hash uname
 "#,
-        target_debug, integration_script, theme_path
+        integration_script, theme_path
     );
     let zshrc_path = temp_dir.path().join(".zshrc");
     std::fs::write(&zshrc_path, zshrc_content).unwrap();

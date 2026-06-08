@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 [dependencies]
 zsh-tree-sitter-highlighter = { path = "../zsh-ts-highlighter" }
 zsh-module = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module" } #, git = "https://github.com/NiltonVolpato/zsh-module.git" }
-toml = "0.8"
+toml = "1.1"
 serde = { version = "1.0", features = ["derive"] }
 
 [build-dependencies]
@@ -22,4 +22,3 @@ zsh-module-test = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-modu
 name = "zsh_tests"
 path = "tests/zsh_tests.rs"
 harness = false
-

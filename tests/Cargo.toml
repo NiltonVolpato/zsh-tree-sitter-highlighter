@@ -5,9 +5,10 @@ edition = "2024"
 publish = false
 
 [dependencies]
-expectrl = "0.8"
+expectrl = "0.9"
 regex = "1.10"
 tempfile = "3.8"
+zsh-module-test = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module-test" }
 
 [dev-dependencies]
 zsh-ts-module = { path = "../zsh-ts-module" }

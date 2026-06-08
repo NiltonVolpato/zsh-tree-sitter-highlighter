@@ -18,26 +18,16 @@ WORKSPACE_DIR="${0:A:h:h}"
     fi
     print
 
+    local flag="--debug"
     if (( ${@[(Ie)--release]} )); then
-        local module_dir="$WORKSPACE_DIR/target/release"
-    else
-        local module_dir="$WORKSPACE_DIR/target/debug"
+        flag="--release"
     fi
 
     local temp_dir="$(mktemp -d)"
     print -P "%F{8}‣ Creating temporary zsh dotfile directory: ${temp_dir}%f"
     print
     cat <<EOF >"${temp_dir}/.zshrc"
-typeset -g -aU module_path
-module_path+=("$module_dir")
-
-# Load the module
-if ! zmodload zsh_ts_module 2>/dev/null; then
-    print -u2 "zsh-tree-sitter-highlighter: failed to load zsh_ts_module from ${module_dir}"
-    return 1
-fi
-
-source "${WORKSPACE_DIR}/zsh-ts-module/zsh-integration.zsh"
+source "${WORKSPACE_DIR}/zsh-ts-module/zsh-integration.zsh" ${flag}
 EOF
 
     print -P "%B‣ Starting a subshell. Run 'exit' (Ctrl-D) to return.%b"

@@ -35,43 +35,74 @@ On macOS, the build produces `libzsh_ts_module.dylib`. The activation script aut
 
 ## Installation & Setup
 
-For regular use, run the installer:
+### Automated Installation (Recommended)
+
+Run the manual installation script, which compiles the native module and copies all files to the target directory:
 
 ```bash
-./install.sh
+# It will ask interactively where to install.
+# Default: ~/.local/share/zsh-tree-sitter-highlighter
+./scripts/manual-install.sh
 ```
 
-Follow the prompts to specify the installation directory. The script compiles the module in release mode and copies the necessary files.
+---
 
-After the installer finishes, add the following lines to your `~/.zshrc`:
+### Step-by-Step Manual Installation (From Source)
 
-```zsh
-module_path+=("$HOME/.local/share/zsh-tree-sitter-highlighter")
-zmodload zsh_ts_module
-source "$HOME/.local/share/zsh-tree-sitter-highlighter/zsh-integration.zsh"
-```
+If you prefer to perform the installation steps manually:
 
-*(Adjust the path if you chose a custom installation directory)*
+1. Compile the native module library:
+   ```bash
+   cargo build --release -p zsh-ts-module --lib
+   ```
 
-### Manual Setup (From Source)
+2. Copy the compiled artifacts, integration script, and themes to a directory of your choice `$DIR` (e.g., `~/.local/share/zsh-tree-sitter-highlighter`):
+   ```bash
+   # Set your installation directory
+   DIR="$HOME/.local/share/zsh-tree-sitter-highlighter"
+   mkdir -p "$DIR/$ZSH_VERSION"
 
-If you prefer to load it directly from your build target directory:
+   # On macOS:
+   # Copy compiled library directly into the Zsh-versioned folder
+   cp target/release/libzsh_ts_module.dylib "$DIR/$ZSH_VERSION/zsh_ts_module.so"
+   # Create the bundle symlink that Zsh expects
+   ln -sf zsh_ts_module.so "$DIR/$ZSH_VERSION/zsh_ts_module.bundle"
 
-```zsh
-# Path to the directory containing libzsh_ts_module.*
-module_path+=(/path/to/zsh-tree-sitter-highlighter/target/release)
-zmodload zsh_ts_module
+   # On Linux:
+   # Copy compiled library directly to the Zsh-versioned folder
+   cp target/release/libzsh_ts_module.so "$DIR/$ZSH_VERSION/zsh_ts_module.so"
 
-# Source the integration script (registers the ZLE hook)
-source /path/to/zsh-tree-sitter-highlighter/zsh-ts-module/zsh-integration.zsh
-```
+   # Copy the Zsh integration script and themes directory
+   cp zsh-ts-module/zsh-integration.zsh "$DIR/"
+   cp -r zsh-ts-module/themes "$DIR/"
+
+   # Optional: clean the target folder to reclaim disk space (which can grow to gigabytes)
+   cargo clean
+   ```
+
+3. Add the following line to your `~/.zshrc`:
+   ```zsh
+   source "$HOME/.local/share/zsh-tree-sitter-highlighter/zsh-integration.zsh"
+   ```
+
+---
+
+### Alternative Installation Methods (Coming Soon)
+
+We plan to support automated installation scripts and package managers in future releases:
+
+*   **Zsh Plugin Managers** (e.g., Oh-My-Zsh, Zinit, Antigen, ZPlug)
+*   **Homebrew Formula** (`brew install zsh-tree-sitter-highlighter`)
+*   **Standalone Installer Script** (`curl -fsSL https://.../install.zsh | zsh`)
+
+---
 
 ## Theme Customization
 
-The theme is an associative array mapping tree-sitter capture names to zsh `region_highlight` attributes:
+The theme is configured using a TOML file that maps tree-sitter capture names to standard Zsh `region_highlight` attributes. By default, the `onedark.toml` theme is used.
 
-| Capture Name | Default |
-|-------------|---------|
+| Capture Name | Example Highlight Style |
+|-------------|-------------------------|
 | `comment` | `fg=#565f89` |
 | `function` | `fg=#7aa2f7` |
 | `string` | `fg=#e0af68` |
@@ -81,26 +112,53 @@ The theme is an associative array mapping tree-sitter capture names to zsh `regi
 | `number` | `fg=#ff9e64` |
 | `operator` | `fg=#89ddff` |
 
-Set `_ZSH_TS_HIGHLIGHTER_THEME` before loading the module to override defaults.
+To override the default theme, set the `_ZSH_TS_HIGHLIGHTER_THEME` environment variable in your `~/.zshrc` before sourcing the integration script:
+
+```zsh
+typeset -g _ZSH_TS_HIGHLIGHTER_THEME="/path/to/your/custom/theme.toml"
+source "$HOME/.local/share/zsh-tree-sitter-highlighter/zsh-integration.zsh"
+```
+
+---
 
 ## Testing & Development
 
-To compile the module and start an interactive testing shell:
+### Local Interactive Development
+
+To compile the module and launch a temporary, isolated subshell with the newly compiled module loaded for testing:
 
 ```bash
 ./scripts/dev-build.zsh [--release|--debug]
 ```
 
-To run the expect-based integration tests:
+### Automated Integration and Unit Tests
+
+All unit tests and ZLE integration tests are written in Rust using a virtual terminal environment.
+
+To run the entire test suite:
 
 ```bash
-expect zsh-ts-module/test-activate.expect
-expect zsh-ts-module/test-highlight.expect
+cargo test
 ```
+
+Unit tests cover AST parsing, theme color resolution, and highlighter correctness. ZLE integration tests verify syntax highlighting output on the terminal command line inside an active `zsh` session.
+
+---
 
 ## Legacy Daemon Mode
 
 The original implementation used a Unix socket daemon with bencode IPC. This code still exists in `zsh-ts-highlighter/src/daemon.rs` but is no longer the recommended approach. The module architecture is simpler, faster, and requires no background process management.
 
-## License
+---
 
+## Roadmap
+
+- [x] Native Zsh module architecture
+- [x] End-to-end ZLE testing framework in Rust
+- [ ] Installer scripts and package managers
+  - [ ] Standalone installer script
+  - [ ] Homebrew tap/formula support
+  - [ ] Pre-compiled release binaries
+- [ ] Highlighter features
+  - [ ] Incremental parsing optimization
+  - [ ] Additional grammars (Python, TOML)
