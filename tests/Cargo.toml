@@ -1,17 +1,17 @@
 [package]
 name = "tests"
 version = "0.0.0"
-edition = "2024"
+edition.workspace = true
 publish = false
 
 [dependencies]
-expectrl = "0.9"
-regex = "1.10"
-tempfile = "3.8"
-zsh-module-test = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module-test" }
+expectrl.workspace = true
+regex.workspace = true
+tempfile.workspace = true
+zsh-module-test.workspace = true
 
 [dev-dependencies]
-treeish-module = { path = "../treeish-module" }
+treeish-module.workspace = true
 
 [[test]]
 name = "tautology"

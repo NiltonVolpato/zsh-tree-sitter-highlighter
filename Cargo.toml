@@ -1,3 +1,33 @@
 [workspace]
 members = ["treeish", "treeish-module", "tests"]
 resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+# Local workspace packages
+treeish = { path = "treeish" }
+treeish-module = { path = "treeish-module" }
+
+# External / Local zsh-module components
+zsh-module = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module" }
+zsh-module-build = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module-build" }
+zsh-module-test = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module-test" }
+
+# Shared external dependencies
+anyhow = "1"
+libc = "0.2"
+rayon = "1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_derive = "1.0.228"
+tree-sitter = "0.26.8"
+tree-sitter-highlight = "0.26.8"
+tree-sitter-md = { version = "0.5.3", features = ["parser"] }
+tree-sitter-zsh = "0.63.3"
+toml = "1.1"
+expectrl = "0.9"
+regex = "1.10"
+tempfile = "3.8"
+googletest = "0.14.2"

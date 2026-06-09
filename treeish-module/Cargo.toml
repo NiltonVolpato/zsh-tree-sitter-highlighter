@@ -1,23 +1,23 @@
 [package]
 name = "treeish-module"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [lib]
 name = "treeish"
 crate-type = ["cdylib"]
 
 [dependencies]
-treeish = { path = "../treeish" }
-zsh-module = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module" } #, git = "https://github.com/NiltonVolpato/zsh-module.git" }
-toml = "1.1"
-serde = { version = "1.0", features = ["derive"] }
+treeish.workspace = true
+zsh-module.workspace = true
+toml.workspace = true
+serde.workspace = true
 
 [build-dependencies]
-zsh-module-build = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module-build" }
+zsh-module-build.workspace = true
 
 [dev-dependencies]
-zsh-module-test = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module-test" }
+zsh-module-test.workspace = true
 
 [[test]]
 name = "zsh_tests"
