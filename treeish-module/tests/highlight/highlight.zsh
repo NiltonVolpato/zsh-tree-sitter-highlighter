@@ -1,6 +1,3 @@
-# Capture script directory at source-time
-typeset -g TEST_DIR="${0:A:h}"
-
 setup() {
   source "$ZSH_MODULE_TEST_SUPPORT/defs.zsh"
   setup_module treeish
@@ -8,7 +5,7 @@ setup() {
       echo "Failed to load treeish" >&2
       return 1
   }
-  typeset -g TREEISH_THEME="${TEST_DIR}/test_theme.toml"
+  typeset -g TREEISH_THEME="${CARGO_MANIFEST_DIR}/tests/highlight/test_theme.toml"
   rehash
   # FIXME: This hash call shouldn't be needed, but it works around a bug in
   # zsh-module's CommandsTable::contains_key implementation (which returns
