@@ -3,12 +3,12 @@ use zsh_module::zsh_module;
 mod theme;
 
 #[zsh_module]
-mod zsh_ts_module {
+mod treeish {
     use std::collections::HashMap;
 
     use zsh_module::env::ParamSetValue;
     use zsh_module::{Association, EnvAccess, Termination};
-    use zsh_tree_sitter_highlighter::highlight::{HighlightEngine, LanguageConfig, Span};
+    use treeish::highlight::{HighlightEngine, LanguageConfig, Span};
 
     // ---------------------------------------------------------------------------
     // Helper: validate commands using the high-level Zsh table APIs
@@ -48,10 +48,10 @@ mod zsh_ts_module {
         }
 
         // ---------------------------------------------------------------------------
-        // Builtin: zsh_ts_highlight
+        // Builtin: treeish_highlight
         // ---------------------------------------------------------------------------
 
-        pub fn zsh_ts_highlight(&mut self, _args: &[&str]) -> Result<(), Termination> {
+        pub fn treeish_highlight(&mut self, _args: &[&str]) -> Result<(), Termination> {
             let env = self.env();
 
             // Lazy-initialize the highlight engine on first call.
@@ -62,7 +62,7 @@ mod zsh_ts_module {
                         Ok(e) => e,
                         Err(err) => {
                             let _ = env.set(
-                                "_zsh_ts_error",
+                                "treeish_error",
                                 ParamSetValue::Scalar(&format!("engine init failed: {}", err)),
                             );
                             return Ok(());
@@ -91,7 +91,7 @@ mod zsh_ts_module {
 
             // Determine language mode.
             let mode = env
-                .get("ZSH_TS_HIGHLIGHTER_MODE")
+                .get("TREEISH_MODE")
                 .and_then(|p| p.as_scalar().map(|s| s.into_owned()))
                 .ok()
                 .unwrap_or_else(|| "zsh".into());
@@ -101,13 +101,13 @@ mod zsh_ts_module {
             };
 
             // Read theme path.
-            let theme_param = match env.get("_ZSH_TS_HIGHLIGHTER_THEME") {
+            let theme_param = match env.get("TREEISH_THEME") {
                 Ok(p) => p,
                 Err(_) => {
                     let _ = env.set(
-                        "_zsh_ts_error",
+                        "treeish_error",
                         ParamSetValue::Scalar(
-                            "_ZSH_TS_HIGHLIGHTER_THEME not set (did you source activate.zsh?)",
+                            "TREEISH_THEME not set (did you source treeish.zsh?)",
                         ),
                     );
                     return Ok(());
@@ -118,8 +118,8 @@ mod zsh_ts_module {
                 Ok(s) => s.into_owned(),
                 Err(_) => {
                     let _ = env.set(
-                        "_zsh_ts_error",
-                        ParamSetValue::Scalar("_ZSH_TS_HIGHLIGHTER_THEME is not a string"),
+                        "treeish_error",
+                        ParamSetValue::Scalar("TREEISH_THEME is not a string"),
                     );
                     return Ok(());
                 }
@@ -127,8 +127,8 @@ mod zsh_ts_module {
 
             if theme_path_str.is_empty() {
                 let _ = env.set(
-                    "_zsh_ts_error",
-                    ParamSetValue::Scalar("_ZSH_TS_HIGHLIGHTER_THEME is empty"),
+                    "treeish_error",
+                    ParamSetValue::Scalar("TREEISH_THEME is empty"),
                 );
                 return Ok(());
             }
@@ -147,7 +147,7 @@ mod zsh_ts_module {
                     }
                     Err(err) => {
                         let _ = env.set(
-                            "_zsh_ts_error",
+                            "treeish_error",
                             ParamSetValue::Scalar(&format!("theme load failed: {}", err)),
                         );
                         return Ok(());
@@ -164,7 +164,7 @@ mod zsh_ts_module {
                 Ok(s) => s,
                 Err(err) => {
                     let _ = env.set(
-                        "_zsh_ts_error",
+                        "treeish_error",
                         ParamSetValue::Scalar(&format!("highlight failed: {}", err)),
                     );
                     return Ok(());
@@ -187,7 +187,7 @@ mod zsh_ts_module {
                     }
                     Err(err) => {
                         let _ = env.set(
-                            "_zsh_ts_error",
+                            "treeish_error",
                             ParamSetValue::Scalar(&format!("command extraction failed: {}", err)),
                         );
                         return Ok(());
@@ -222,11 +222,11 @@ mod zsh_ts_module {
 
             // Write the result array for the zsh adapter to pick up.
             if let Err(e) = env.set(
-                "_zsh_ts_regions",
+                "treeish_regions",
                 ParamSetValue::Array(Box::new(regions.into_iter())),
             ) {
                 let _ = env.set(
-                    "_zsh_ts_error",
+                    "treeish_error",
                     ParamSetValue::Scalar(&format!("failed to set regions: {:?}", e)),
                 );
             }

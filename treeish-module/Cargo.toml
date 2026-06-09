@@ -1,13 +1,14 @@
 [package]
-name = "zsh-ts-module"
+name = "treeish-module"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
+name = "treeish"
 crate-type = ["cdylib"]
 
 [dependencies]
-zsh-tree-sitter-highlighter = { path = "../zsh-ts-highlighter" }
+treeish = { path = "../treeish" }
 zsh-module = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module" } #, git = "https://github.com/NiltonVolpato/zsh-module.git" }
 toml = "1.1"
 serde = { version = "1.0", features = ["derive"] }

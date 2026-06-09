@@ -306,7 +306,7 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
     let theme_path = manifest_dir.join("highlight/test_ansidecode_theme.toml");
 
     // Build the dynamic library target explicitly to ensure it exists
-    zsh_module_test::build_module(workspace_root, Some("zsh-ts-module"));
+    zsh_module_test::build_module(workspace_root, Some("treeish-module"));
 
     let temp_dir = tempfile::tempdir().unwrap();
     let install_dir = temp_dir.path();
@@ -333,14 +333,14 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
         .expect("Failed to run manual installer script");
     assert!(status.success(), "manual-install.sh failed");
 
-    let integration_script = install_dir.join("zsh-integration.zsh");
+    let integration_script = install_dir.join("treeish.zsh");
 
     let zshrc_content = format!(
         r#"
 PROMPT='READY %% '
 zmodload zsh/zle
 source {:?}
-typeset -g _ZSH_TS_HIGHLIGHTER_THEME={:?}
+typeset -g TREEISH_THEME={:?}
 abort_command() {{ zle -I; BUFFER="" }}
 zle -N abort_command; bindkey "^G" abort_command
 rehash

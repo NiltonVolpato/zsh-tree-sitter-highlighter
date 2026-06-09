@@ -1,4 +1,4 @@
-# zsh-tree-sitter-highlighter
+# treeish
 
 A Zsh shell syntax highlighter using tree-sitter for prompt highlighting.
 
@@ -14,8 +14,8 @@ A Zsh shell syntax highlighter using tree-sitter for prompt highlighting.
 
 This project consists of:
 
-- **`zsh-ts-highlighter/`**: Core Rust library with tree-sitter parsing and highlighting logic
-- **`zsh-ts-module/`**: Zsh module (Rust `cdylib`) that integrates the highlighter directly into zsh
+- **`treeish/`**: Core Rust library with tree-sitter parsing and highlighting logic
+- **`treeish-module/`**: Zsh module (Rust `cdylib`) that integrates the highlighter directly into zsh
 
 The module reads `BUFFER` and `PREBUFFER` directly via zsh's parameter API, performs tree-sitter highlighting, validates commands against zsh's internal hash tables, and writes `region_highlight` entries — all without leaving the zsh process.
 
@@ -28,10 +28,10 @@ The module reads `BUFFER` and `PREBUFFER` directly via zsh's parameter API, perf
 ## Build
 
 ```bash
-cargo build -p zsh-ts-module
+cargo build -p treeish-module
 ```
 
-On macOS, the build produces `libzsh_ts_module.dylib`. The activation script automatically creates the `zsh_ts_module.bundle` symlink that zsh expects.
+On macOS, the build produces `libtreeish.dylib`. The activation script automatically creates the `treeish.bundle` symlink that zsh expects.
 
 ## Installation & Setup
 
@@ -41,7 +41,7 @@ Run the manual installation script, which compiles the native module and copies 
 
 ```bash
 # It will ask interactively where to install.
-# Default: ~/.local/share/zsh-tree-sitter-highlighter
+# Default: ~/.local/share/treeish
 ./scripts/manual-install.sh
 ```
 
@@ -53,28 +53,28 @@ If you prefer to perform the installation steps manually:
 
 1. Compile the native module library:
    ```bash
-   cargo build --release -p zsh-ts-module --lib
+   cargo build --release -p treeish-module --lib
    ```
 
-2. Copy the compiled artifacts, integration script, and themes to a directory of your choice `$DIR` (e.g., `~/.local/share/zsh-tree-sitter-highlighter`):
+2. Copy the compiled artifacts, integration script, and themes to a directory of your choice `$DIR` (e.g., `~/.local/share/treeish`):
    ```bash
    # Set your installation directory
-   DIR="$HOME/.local/share/zsh-tree-sitter-highlighter"
+   DIR="$HOME/.local/share/treeish"
    mkdir -p "$DIR/$ZSH_VERSION"
 
    # On macOS:
    # Copy compiled library directly into the Zsh-versioned folder
-   cp target/release/libzsh_ts_module.dylib "$DIR/$ZSH_VERSION/zsh_ts_module.so"
+   cp target/release/libtreeish.dylib "$DIR/$ZSH_VERSION/treeish.so"
    # Create the bundle symlink that Zsh expects
-   ln -sf zsh_ts_module.so "$DIR/$ZSH_VERSION/zsh_ts_module.bundle"
+   ln -sf treeish.so "$DIR/$ZSH_VERSION/treeish.bundle"
 
    # On Linux:
    # Copy compiled library directly to the Zsh-versioned folder
-   cp target/release/libzsh_ts_module.so "$DIR/$ZSH_VERSION/zsh_ts_module.so"
+   cp target/release/libtreeish.so "$DIR/$ZSH_VERSION/treeish.so"
 
    # Copy the Zsh integration script and themes directory
-   cp zsh-ts-module/zsh-integration.zsh "$DIR/"
-   cp -r zsh-ts-module/themes "$DIR/"
+   cp treeish-module/treeish.zsh "$DIR/"
+   cp -r treeish-module/themes "$DIR/"
 
    # Optional: clean the target folder to reclaim disk space (which can grow to gigabytes)
    cargo clean
@@ -82,7 +82,7 @@ If you prefer to perform the installation steps manually:
 
 3. Add the following line to your `~/.zshrc`:
    ```zsh
-   source "$HOME/.local/share/zsh-tree-sitter-highlighter/zsh-integration.zsh"
+   source "$HOME/.local/share/treeish/treeish.zsh"
    ```
 
 ---
@@ -92,8 +92,8 @@ If you prefer to perform the installation steps manually:
 We plan to support automated installation scripts and package managers in future releases:
 
 *   **Zsh Plugin Managers** (e.g., Oh-My-Zsh, Zinit, Antigen, ZPlug)
-*   **Homebrew Formula** (`brew install zsh-tree-sitter-highlighter`)
-*   **Standalone Installer Script** (`curl -fsSL https://.../install.zsh | zsh`)
+*   **Homebrew Formula** (`brew install treeish`)
+*   **Standalone Installer Script** (`curl -fsSL https://treei.sh/install.sh | zsh`)
 
 ---
 
@@ -112,11 +112,11 @@ The theme is configured using a TOML file that maps tree-sitter capture names to
 | `number` | `fg=#ff9e64` |
 | `operator` | `fg=#89ddff` |
 
-To override the default theme, set the `_ZSH_TS_HIGHLIGHTER_THEME` environment variable in your `~/.zshrc` before sourcing the integration script:
+To override the default theme, set the `TREEISH_THEME` environment variable in your `~/.zshrc` before sourcing the integration script:
 
 ```zsh
-typeset -g _ZSH_TS_HIGHLIGHTER_THEME="/path/to/your/custom/theme.toml"
-source "$HOME/.local/share/zsh-tree-sitter-highlighter/zsh-integration.zsh"
+typeset -g TREEISH_THEME="/path/to/your/custom/theme.toml"
+source "$HOME/.local/share/treeish/treeish.zsh"
 ```
 
 ---
@@ -142,12 +142,6 @@ cargo test
 ```
 
 Unit tests cover AST parsing, theme color resolution, and highlighter correctness. ZLE integration tests verify syntax highlighting output on the terminal command line inside an active `zsh` session.
-
----
-
-## Legacy Daemon Mode
-
-The original implementation used a Unix socket daemon with bencode IPC. This code still exists in `zsh-ts-highlighter/src/daemon.rs` but is no longer the recommended approach. The module architecture is simpler, faster, and requires no background process management.
 
 ---
 

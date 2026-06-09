@@ -11,7 +11,7 @@ tempfile = "3.8"
 zsh-module-test = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module-test" }
 
 [dev-dependencies]
-zsh-ts-module = { path = "../zsh-ts-module" }
+treeish-module = { path = "../treeish-module" }
 
 [[test]]
 name = "tautology"

@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 set -eu
 
-print -P "%F{cyan}%B=== Zsh Tree-Sitter Highlighter Installer ===%b%f"
+print -P "%F{cyan}%B=== Treeish Installer ===%b%f"
 print -P "This script will compile the native Zsh module and set up the integration.\n"
 
 : ${XDG_DATA_HOME:=~/.local/share}
@@ -13,7 +13,7 @@ fi
 
 # Default installation directory
 if [[ -z "${INSTALL_DIR:-}" ]]; then
-    INSTALL_DIR="$XDG_DATA_HOME/zsh-tree-sitter-highlighter"
+    INSTALL_DIR="$XDG_DATA_HOME/treeish"
     if ((interactive)) && [[ -t 0 ]]; then
         print -P "‣ %F{10}Enter installation directory (or press Enter; Ctrl-C to cancel):%f"
         vared -p "> " -e INSTALL_DIR
@@ -28,7 +28,7 @@ local cargo_build_dir="${CARGO_BUILD_DIR:-target/release}"
 
 if ((!skip_build)); then
     print -P "%B‣ Building module in release mode...%b"
-    if ! cargo build --manifest-path "$WORKSPACE_DIR/Cargo.toml" -p zsh-ts-module --lib --release; then
+    if ! cargo build --manifest-path "$WORKSPACE_DIR/Cargo.toml" -p treeish-module --lib --release; then
         print -u2 -P "%F{red}Error: cargo build failed%f"
         exit 1
     fi
@@ -40,18 +40,18 @@ mkdir -p "$INSTALL_DIR/$ZSH_VERSION"
 # Determine OS type and copy dynamic library using cp -l with fallback
 if [[ "$OSTYPE" == "darwin"* ]]; then
     print -P "‣ Installing for macOS..."
-    cp -l "$WORKSPACE_DIR/${cargo_build_dir}/libzsh_ts_module.dylib" "$INSTALL_DIR/$ZSH_VERSION/zsh_ts_module.so" 2>/dev/null ||
-        cp "$WORKSPACE_DIR/${cargo_build_dir}/libzsh_ts_module.dylib" "$INSTALL_DIR/$ZSH_VERSION/zsh_ts_module.so"
-    ln -sf zsh_ts_module.so "$INSTALL_DIR/$ZSH_VERSION/zsh_ts_module.bundle"
+    cp -l "$WORKSPACE_DIR/${cargo_build_dir}/libtreeish.dylib" "$INSTALL_DIR/$ZSH_VERSION/treeish.so" 2>/dev/null ||
+        cp "$WORKSPACE_DIR/${cargo_build_dir}/libtreeish.dylib" "$INSTALL_DIR/$ZSH_VERSION/treeish.so"
+    ln -sf treeish.so "$INSTALL_DIR/$ZSH_VERSION/treeish.bundle"
 else
     print -P "‣ Installing for Linux/Unix..."
-    cp -l "$WORKSPACE_DIR/${cargo_build_dir}/libzsh_ts_module.so" "$INSTALL_DIR/$ZSH_VERSION/zsh_ts_module.so" 2>/dev/null ||
-        cp "$WORKSPACE_DIR/${cargo_build_dir}/libzsh_ts_module.so" "$INSTALL_DIR/$ZSH_VERSION/zsh_ts_module.so"
+    cp -l "$WORKSPACE_DIR/${cargo_build_dir}/libtreeish.so" "$INSTALL_DIR/$ZSH_VERSION/treeish.so" 2>/dev/null ||
+        cp "$WORKSPACE_DIR/${cargo_build_dir}/libtreeish.so" "$INSTALL_DIR/$ZSH_VERSION/treeish.so"
 fi
 
 print -P "‣ Copying integration script and themes..."
-cp "$WORKSPACE_DIR/zsh-ts-module/zsh-integration.zsh" "$INSTALL_DIR/"
-cp -r "$WORKSPACE_DIR/zsh-ts-module/themes" "$INSTALL_DIR/"
+cp "$WORKSPACE_DIR/treeish-module/treeish.zsh" "$INSTALL_DIR/"
+cp -r "$WORKSPACE_DIR/treeish-module/themes" "$INSTALL_DIR/"
 
 print -P "\n%F{green}%B✔ Installation completed successfully!%b%f"
 
@@ -71,18 +71,18 @@ fi
 
 if [[ "$modify_zshrc" =~ ^([Yy]|[Yy][Ee][Ss]|1)$ ]]; then
     local zshrc="${ZDOTDIR:-$HOME}/.zshrc"
-    local line="source \"$INSTALL_DIR/zsh-integration.zsh\""
+    local line="source \"$INSTALL_DIR/treeish.zsh\""
 
     if [[ -f "$zshrc" ]] && grep -Fxq "$line" "$zshrc"; then
         print -P "%F{yellow}⚠ Plugin activation line is already present in $zshrc.%f"
     else
         echo "" >>"$zshrc"
-        echo "# Zsh Tree-Sitter Highlighter" >>"$zshrc"
+        echo "# Treeish Highlighter" >>"$zshrc"
         echo "$line" >>"$zshrc"
         print -P "%F{green}✔ Appended plugin activation to $zshrc%f"
     fi
     print -P "Restart your terminal or run %F{cyan}exec zsh%f to activate the highlighter!"
 else
     print -P "To activate the highlighter manually, add the following line to your %B~/.zshrc%b:"
-    print -P "%F{cyan}source \"$INSTALL_DIR/zsh-integration.zsh\"%f"
+    print -P "%F{cyan}source \"$INSTALL_DIR/treeish.zsh\"%f"
 fi
