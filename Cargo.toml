@@ -5,6 +5,10 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/NiltonVolpato/zsh-tree-sitter-highlighter"
+description = "A Zsh syntax highlighter using tree-sitter"
+readme = "README.md"
 
 [workspace.dependencies]
 # Local workspace packages

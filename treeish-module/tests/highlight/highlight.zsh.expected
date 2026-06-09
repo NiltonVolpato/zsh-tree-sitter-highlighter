@@ -25,6 +25,44 @@
 0 21 fg=function
 0 21 fg=command.invalid
 
+=== test_markdown_bold_italic ===
+0 8 fg=text.strong
+0 2 fg=punctuation.delimiter
+6 8 fg=punctuation.delimiter
+13 21 fg=text.emphasis
+13 14 fg=punctuation.delimiter
+20 21 fg=punctuation.delimiter
+
+=== test_markdown_code_block ===
+0 22 fg=text.literal
+0 3 fg=punctuation.delimiter
+7 11 fg=function
+18 21 fg=punctuation.delimiter
+
+=== test_markdown_heading ===
+0 1 fg=punctuation.special
+2 13 fg=text.title
+
+=== test_markdown_multiline ===
+0 1 fg=punctuation.special
+2 9 fg=text.title
+11 13 fg=punctuation.special
+13 21 fg=text.strong
+13 15 fg=punctuation.delimiter
+19 21 fg=punctuation.delimiter
+26 34 fg=text.emphasis
+26 27 fg=punctuation.delimiter
+33 34 fg=punctuation.delimiter
+35 37 fg=punctuation.special
+44 50 fg=text.literal
+44 45 fg=punctuation.delimiter
+49 50 fg=punctuation.delimiter
+51 53 fg=punctuation.special
+61 83 fg=text.literal
+61 64 fg=punctuation.delimiter
+68 72 fg=function
+79 82 fg=punctuation.delimiter
+
 === test_prebuffer ===
 0 4 fg=function
 

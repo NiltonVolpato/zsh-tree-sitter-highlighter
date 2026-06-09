@@ -66,10 +66,10 @@ pub fn tag_to_color(tag: &str) -> u8 {
 pub fn parse_spans(stream: &str) -> (String, Vec<(usize, usize, &'static str)>) {
     let content = stream;
 
-    // Filter out carriage returns and newlines
+    // Filter out carriage returns
     let filtered: String = content
         .chars()
-        .filter(|&c| c != '\r' && c != '\n')
+        .filter(|&c| c != '\r')
         .collect();
 
     // Regex matches any CSI escape sequence: \x1b[ <parameters> <letter>
@@ -135,16 +135,22 @@ pub fn parse_spans(stream: &str) -> (String, Vec<(usize, usize, &'static str)>) 
         spans.push((current_span_start, char_count, color_to_tag(prev)));
     }
 
-    let trimmed = clean_text.trim_end();
-    let trimmed_len = trimmed.chars().count();
+    let mut clean_text = clean_text;
+    assert!(
+        clean_text.ends_with('\n'),
+        "ZLE captured buffer must end with a newline character introduced by the terminal redraw"
+    );
+    clean_text.pop();
+
+    let clean_text_len = clean_text.chars().count();
     let mut final_spans = Vec::new();
     for (start, end, tag) in spans {
-        if start < trimmed_len {
-            final_spans.push((start, end.min(trimmed_len), tag));
+        if start < clean_text_len {
+            final_spans.push((start, end.min(clean_text_len), tag));
         }
     }
 
-    (trimmed.to_string(), final_spans)
+    (clean_text, final_spans)
 }
 
 pub fn spans_to_markup(clean_text: &str, spans: &[(usize, usize, &'static str)]) -> String {
@@ -167,7 +173,7 @@ pub fn spans_to_markup(clean_text: &str, spans: &[(usize, usize, &'static str)])
         result.push(chars[curr]);
         curr += 1;
     }
-    result.trim().to_string()
+    result
 }
 
 pub fn parse_zle_highlight(stream: &str) -> String {
@@ -369,9 +375,17 @@ hash uname
     (session, temp_dir)
 }
 
-pub fn highlight_buffer(buffer: &str) -> String {
+pub fn highlight_buffer_in_mode(buffer: &str, mode: &str) -> String {
     let (mut session, _temp_dir) = spawn_zsh_session();
-    session.send(buffer).unwrap();
+    if mode != "zsh" {
+        session.send_line(&format!("typeset -g TREEISH_MODE={:?}", mode)).unwrap();
+        session.expect(Regex(PROMPT)).unwrap();
+    }
+    if buffer.contains('\n') {
+        session.send(&format!("\x1b[200~{}\x1b[201~", buffer)).unwrap();
+    } else {
+        session.send(buffer).unwrap();
+    }
     session.send(b"\x0c").unwrap();
     session.expect(Regex(PROMPT)).unwrap(); // Ignore all the terminal updates up to the prompt.
     session.send(b"\x07").unwrap();
@@ -382,7 +396,15 @@ pub fn highlight_buffer(buffer: &str) -> String {
     captured
 }
 
-pub fn highlight_markup(buffer: &str) -> String {
-    let captured = highlight_buffer(buffer);
+pub fn highlight_markup_in_mode(buffer: &str, mode: &str) -> String {
+    let captured = highlight_buffer_in_mode(buffer, mode);
     parse_zle_highlight(&captured)
+}
+
+pub fn highlight_buffer(buffer: &str) -> String {
+    highlight_buffer_in_mode(buffer, "zsh")
+}
+
+pub fn highlight_markup(buffer: &str) -> String {
+    highlight_markup_in_mode(buffer, "zsh")
 }

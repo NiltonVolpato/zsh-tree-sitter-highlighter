@@ -2,6 +2,10 @@
 name = "treeish-module"
 version.workspace = true
 edition.workspace = true
+description = "Zsh module wrapping the treeish syntax highlighter"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
 
 [lib]
 name = "treeish"

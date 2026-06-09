@@ -48,3 +48,49 @@ test_complex_nesting() {
   treeish_highlight
   print -l "${treeish_regions[@]}"
 }
+
+test_markdown_heading() {
+  BUFFER='# Hello World'
+  PREBUFFER=''
+  typeset -g TREEISH_MODE='markdown'
+  treeish_highlight
+  print -l "${treeish_regions[@]}"
+  typeset -g TREEISH_MODE='zsh'
+}
+
+test_markdown_bold_italic() {
+  BUFFER='**bold** and *italic*'
+  PREBUFFER=''
+  typeset -g TREEISH_MODE='markdown'
+  treeish_highlight
+  print -l "${treeish_regions[@]}"
+  typeset -g TREEISH_MODE='zsh'
+}
+
+test_markdown_code_block() {
+  BUFFER=$'```zsh\necho hello\n```'
+  PREBUFFER=''
+  typeset -g TREEISH_MODE='markdown'
+  treeish_highlight
+  print -l "${treeish_regions[@]}"
+  typeset -g TREEISH_MODE='zsh'
+}
+
+test_markdown_multiline() {
+  BUFFER="\
+# Heading
+
+- **bold** and *italic*
+- inline \`code\`
+- block:
+
+\`\`\`zsh
+echo hello
+\`\`\`
+"
+  PREBUFFER=''
+  typeset -g TREEISH_MODE='markdown'
+  treeish_highlight
+  print -l "${treeish_regions[@]}"
+  typeset -g TREEISH_MODE='zsh'
+}
