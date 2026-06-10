@@ -1,18 +1,18 @@
 [package]
-name = "treeish-module"
+name = "treeizsh-module"
 version.workspace = true
 edition.workspace = true
-description = "Zsh module wrapping the treeish syntax highlighter"
+description = "Zsh module wrapping the treeizsh syntax highlighter"
 license.workspace = true
 repository.workspace = true
 readme.workspace = true
 
 [lib]
-name = "treeish"
+name = "treeizsh"
 crate-type = ["cdylib"]
 
 [dependencies]
-treeish.workspace = true
+treeizsh.workspace = true
 zsh-module.workspace = true
 toml.workspace = true
 serde.workspace = true

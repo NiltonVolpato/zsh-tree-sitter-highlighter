@@ -1,4 +1,4 @@
-# treeish
+# treeizsh
 
 A Zsh shell syntax highlighter using tree-sitter for prompt highlighting.
 
@@ -14,8 +14,8 @@ A Zsh shell syntax highlighter using tree-sitter for prompt highlighting.
 
 This project consists of:
 
-- **`treeish/`**: Core Rust library with tree-sitter parsing and highlighting logic
-- **`treeish-module/`**: Zsh module (Rust `cdylib`) that integrates the highlighter directly into zsh
+- **`treeizsh/`**: Core Rust library with tree-sitter parsing and highlighting logic
+- **`treeizsh-module/`**: Zsh module (Rust `cdylib`) that integrates the highlighter directly into zsh
 
 The module reads `BUFFER` and `PREBUFFER` directly via zsh's parameter API, performs tree-sitter highlighting, validates commands against zsh's internal hash tables, and writes `region_highlight` entries — all without leaving the zsh process.
 
@@ -28,10 +28,10 @@ The module reads `BUFFER` and `PREBUFFER` directly via zsh's parameter API, perf
 ## Build
 
 ```bash
-cargo build -p treeish-module
+cargo build -p treeizsh-module
 ```
 
-On macOS, the build produces `libtreeish.dylib`. The activation script automatically creates the `treeish.bundle` symlink that zsh expects.
+On macOS, the build produces `libtreeizsh.dylib`. The activation script automatically creates the `treeizsh.bundle` symlink that zsh expects.
 
 ## Installation & Setup
 
@@ -41,7 +41,7 @@ Run the manual installation script, which compiles the native module and copies 
 
 ```bash
 # It will ask interactively where to install.
-# Default: ~/.local/share/treeish
+# Default: ~/.local/share/treeizsh
 ./scripts/manual-install.sh
 ```
 
@@ -53,28 +53,28 @@ If you prefer to perform the installation steps manually:
 
 1. Compile the native module library:
    ```bash
-   cargo build --release -p treeish-module --lib
+   cargo build --release -p treeizsh-module --lib
    ```
 
-2. Copy the compiled artifacts, integration script, and themes to a directory of your choice `$DIR` (e.g., `~/.local/share/treeish`):
+2. Copy the compiled artifacts, integration script, and themes to a directory of your choice `$DIR` (e.g., `~/.local/share/treeizsh`):
    ```bash
    # Set your installation directory
-   DIR="$HOME/.local/share/treeish"
+   DIR="$HOME/.local/share/treeizsh"
    mkdir -p "$DIR/$ZSH_VERSION"
 
    # On macOS:
    # Copy compiled library directly into the Zsh-versioned folder
-   cp target/release/libtreeish.dylib "$DIR/$ZSH_VERSION/treeish.so"
+   cp target/release/libtreeizsh.dylib "$DIR/$ZSH_VERSION/treeizsh.so"
    # Create the bundle symlink that Zsh expects
-   ln -sf treeish.so "$DIR/$ZSH_VERSION/treeish.bundle"
+   ln -sf treeizsh.so "$DIR/$ZSH_VERSION/treeizsh.bundle"
 
    # On Linux:
    # Copy compiled library directly to the Zsh-versioned folder
-   cp target/release/libtreeish.so "$DIR/$ZSH_VERSION/treeish.so"
+   cp target/release/libtreeizsh.so "$DIR/$ZSH_VERSION/treeizsh.so"
 
    # Copy the Zsh integration script and themes directory
-   cp treeish-module/treeish.zsh "$DIR/"
-   cp -r treeish-module/themes "$DIR/"
+   cp treeizsh-module/treeizsh.zsh "$DIR/"
+   cp -r treeizsh-module/themes "$DIR/"
 
    # Optional: clean the target folder to reclaim disk space (which can grow to gigabytes)
    cargo clean
@@ -82,7 +82,7 @@ If you prefer to perform the installation steps manually:
 
 3. Add the following line to your `~/.zshrc`:
    ```zsh
-   source "$HOME/.local/share/treeish/treeish.zsh"
+   source "$HOME/.local/share/treeizsh/treeizsh.zsh"
    ```
 
 ---
@@ -92,7 +92,7 @@ If you prefer to perform the installation steps manually:
 We plan to support automated installation scripts and package managers in future releases:
 
 *   **Zsh Plugin Managers** (e.g., Oh-My-Zsh, Zinit, Antigen, ZPlug)
-*   **Homebrew Formula** (`brew install treeish`)
+*   **Homebrew Formula** (`brew install treeizsh`)
 *   **Standalone Installer Script** (`curl -fsSL https://treei.sh/install.sh | zsh`)
 
 ---
@@ -112,11 +112,11 @@ The theme is configured using a TOML file that maps tree-sitter capture names to
 | `number` | `fg=#ff9e64` |
 | `operator` | `fg=#89ddff` |
 
-To override the default theme, set the `TREEISH_THEME` environment variable in your `~/.zshrc` before sourcing the integration script:
+To override the default theme, set the `TREEIZSH_THEME` environment variable in your `~/.zshrc` before sourcing the integration script:
 
 ```zsh
-typeset -g TREEISH_THEME="/path/to/your/custom/theme.toml"
-source "$HOME/.local/share/treeish/treeish.zsh"
+typeset -g TREEIZSH_THEME="/path/to/your/custom/theme.toml"
+source "$HOME/.local/share/treeizsh/treeizsh.zsh"
 ```
 
 ---

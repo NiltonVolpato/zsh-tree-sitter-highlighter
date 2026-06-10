@@ -6,9 +6,9 @@ fn main() {
     // Call the standard setup first (this sets up linker args, cfgs, etc.)
     zsh_module_build::setup_zsh_module();
 
-    // Now, create symlinks for the custom library name "treeish"
-    // (since our package name is "treeish-module" but our library name is "treeish").
-    create_custom_symlinks("treeish");
+    // Now, create symlinks for the custom library name "treeizsh"
+    // (since our package name is "treeizsh-module" but our library name is "treeizsh").
+    create_custom_symlinks("treeizsh");
 }
 
 fn create_custom_symlinks(module_name: &str) {

@@ -344,7 +344,7 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
     let theme_path = manifest_dir.join("highlight/test_ansidecode_theme.toml");
 
     // Build the dynamic library target explicitly to ensure it exists
-    zsh_module_test::build_module(workspace_root, Some("treeish-module"));
+    zsh_module_test::build_module(workspace_root, Some("treeizsh-module"));
 
     let temp_dir = tempfile::tempdir().unwrap();
     let install_dir = temp_dir.path();
@@ -383,14 +383,14 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
         install_dir.to_string_lossy()
     );
 
-    let integration_script = install_dir.join("treeish.zsh");
+    let integration_script = install_dir.join("treeizsh.zsh");
 
     let zshrc_content = format!(
         r#"
 PROMPT='READY [%?] %% '
 zmodload zsh/zle
 source {:?}
-typeset -g TREEISH_THEME={:?}
+typeset -g TREEIZSH_THEME={:?}
 abort_command() {{ zle -I; BUFFER="" }}
 zle -N abort_command; bindkey "^G" abort_command
 "#,
@@ -423,7 +423,7 @@ pub fn highlight_buffer_in_mode(buffer: &str, mode: &str) -> String {
     let mut session = expectrl::session::log(session, std::io::stdout()).unwrap();
     if mode != "zsh" {
         session
-            .send_line(&format!("typeset -g TREEISH_MODE={:?}", mode))
+            .send_line(&format!("typeset -g TREEIZSH_MODE={:?}", mode))
             .unwrap();
         let result = session.expect(PROMPT_RE);
         check_result(&mut session, result);

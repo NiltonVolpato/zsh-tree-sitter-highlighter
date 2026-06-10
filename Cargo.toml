@@ -1,5 +1,5 @@
 [workspace]
-members = ["treeish", "treeish-module", "tests"]
+members = ["treeizsh", "treeizsh-module", "tests"]
 resolver = "3"
 
 [workspace.package]
@@ -12,8 +12,8 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Local workspace packages
-treeish = { path = "treeish" }
-treeish-module = { path = "treeish-module" }
+treeizsh = { path = "treeizsh" }
+treeizsh-module = { path = "treeizsh-module" }
 
 # External / Local zsh-module components
 zsh-module = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module" }

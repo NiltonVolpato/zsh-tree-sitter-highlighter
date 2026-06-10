@@ -1,5 +1,5 @@
 [package]
-name = "treeish"
+name = "treeizsh"
 version.workspace = true
 edition.workspace = true
 description.workspace = true

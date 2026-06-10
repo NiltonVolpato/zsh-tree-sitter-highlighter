@@ -11,7 +11,7 @@ tempfile.workspace = true
 zsh-module-test.workspace = true
 
 [dev-dependencies]
-treeish-module.workspace = true
+treeizsh-module.workspace = true
 
 [[test]]
 name = "tautology"

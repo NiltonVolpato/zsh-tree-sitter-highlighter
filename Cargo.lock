@@ -907,7 +907,7 @@ dependencies = [
  "expectrl",
  "regex",
  "tempfile",
- "treeish-module",
+ "treeizsh-module",
  "zsh-module-test",
 ]
 
@@ -1024,7 +1024,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "treeish"
+name = "treeizsh"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1041,12 +1041,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "treeish-module"
+name = "treeizsh-module"
 version = "0.1.0"
 dependencies = [
  "serde",
  "toml",
- "treeish",
+ "treeizsh",
  "zsh-module",
  "zsh-module-build",
  "zsh-module-test",

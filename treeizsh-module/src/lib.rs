@@ -3,10 +3,10 @@ use zsh_module::zsh_module;
 mod theme;
 
 #[zsh_module]
-mod treeish {
+mod treeizsh {
     use std::collections::HashMap;
 
-    use treeish::highlight::{HighlightEngine, LanguageConfig, Span};
+    use treeizsh::highlight::{HighlightEngine, LanguageConfig, Span};
     use zsh_module::env::ParamSetValue;
     use zsh_module::{Association, EnvAccess, Termination};
 
@@ -48,10 +48,10 @@ mod treeish {
         }
 
         // ---------------------------------------------------------------------------
-        // Builtin: treeish_highlight
+        // Builtin: treeizsh_highlight
         // ---------------------------------------------------------------------------
 
-        pub fn treeish_highlight(&mut self, _args: &[&str]) -> Result<(), Termination> {
+        pub fn treeizsh_highlight(&mut self, _args: &[&str]) -> Result<(), Termination> {
             let env = self.env();
 
             // Lazy-initialize the highlight engine on first call.
@@ -62,7 +62,7 @@ mod treeish {
                         Ok(e) => e,
                         Err(err) => {
                             let _ = env.set(
-                                "treeish_error",
+                                "treeizsh_error",
                                 ParamSetValue::Scalar(&format!("engine init failed: {}", err)),
                             );
                             return Ok(());
@@ -91,7 +91,7 @@ mod treeish {
 
             // Determine language mode.
             let mode = env
-                .get("TREEISH_MODE")
+                .get("TREEIZSH_MODE")
                 .and_then(|p| p.as_scalar().map(|s| s.into_owned()))
                 .ok()
                 .unwrap_or_else(|| "zsh".into());
@@ -101,13 +101,13 @@ mod treeish {
             };
 
             // Read theme path.
-            let theme_param = match env.get("TREEISH_THEME") {
+            let theme_param = match env.get("TREEIZSH_THEME") {
                 Ok(p) => p,
                 Err(_) => {
                     let _ = env.set(
-                        "treeish_error",
+                        "treeizsh_error",
                         ParamSetValue::Scalar(
-                            "TREEISH_THEME not set (did you source treeish.zsh?)",
+                            "TREEIZSH_THEME not set (did you source treeizsh.zsh?)",
                         ),
                     );
                     return Ok(());
@@ -118,8 +118,8 @@ mod treeish {
                 Ok(s) => s.into_owned(),
                 Err(_) => {
                     let _ = env.set(
-                        "treeish_error",
-                        ParamSetValue::Scalar("TREEISH_THEME is not a string"),
+                        "treeizsh_error",
+                        ParamSetValue::Scalar("TREEIZSH_THEME is not a string"),
                     );
                     return Ok(());
                 }
@@ -127,8 +127,8 @@ mod treeish {
 
             if theme_path_str.is_empty() {
                 let _ = env.set(
-                    "treeish_error",
-                    ParamSetValue::Scalar("TREEISH_THEME is empty"),
+                    "treeizsh_error",
+                    ParamSetValue::Scalar("TREEIZSH_THEME is empty"),
                 );
                 return Ok(());
             }
@@ -147,7 +147,7 @@ mod treeish {
                     }
                     Err(err) => {
                         let _ = env.set(
-                            "treeish_error",
+                            "treeizsh_error",
                             ParamSetValue::Scalar(&format!("theme load failed: {}", err)),
                         );
                         return Ok(());
@@ -164,7 +164,7 @@ mod treeish {
                 Ok(s) => s,
                 Err(err) => {
                     let _ = env.set(
-                        "treeish_error",
+                        "treeizsh_error",
                         ParamSetValue::Scalar(&format!("highlight failed: {}", err)),
                     );
                     return Ok(());
@@ -187,7 +187,7 @@ mod treeish {
                     }
                     Err(err) => {
                         let _ = env.set(
-                            "treeish_error",
+                            "treeizsh_error",
                             ParamSetValue::Scalar(&format!("command extraction failed: {}", err)),
                         );
                         return Ok(());
@@ -222,11 +222,11 @@ mod treeish {
 
             // Write the result array for the zsh adapter to pick up.
             if let Err(e) = env.set(
-                "treeish_regions",
+                "treeizsh_regions",
                 ParamSetValue::Array(Box::new(regions.into_iter())),
             ) {
                 let _ = env.set(
-                    "treeish_error",
+                    "treeizsh_error",
                     ParamSetValue::Scalar(&format!("failed to set regions: {:?}", e)),
                 );
             }
