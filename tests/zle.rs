@@ -1,3 +1,4 @@
+use pretty_assertions::assert_eq;
 use tests::{highlight_markup, highlight_markup_in_mode};
 
 #[test]
@@ -92,4 +93,3 @@ fn test_keywords_control_structures() {
         "<keyword>if</keyword> <function>true</function>; <keyword>then</keyword> <function>echo</function> yes; <keyword>fi</keyword>"
     );
 }
-

@@ -387,12 +387,14 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
 
     let zshrc_content = format!(
         r#"
+set -e
 PROMPT='READY [%?] %% '
 zmodload zsh/zle
 source {:?}
 typeset -g TREEIZSH_THEME={:?}
 abort_command() {{ zle -I; BUFFER="" }}
 zle -N abort_command; bindkey "^G" abort_command
+set +e
 "#,
         integration_script, theme_path
     );
@@ -418,9 +420,23 @@ zle -N abort_command; bindkey "^G" abort_command
     (session, temp_dir)
 }
 
+struct CapturedWriter;
+
+impl std::io::Write for CapturedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let s = String::from_utf8_lossy(buf);
+        print!("{}", s);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 pub fn highlight_buffer_in_mode(buffer: &str, mode: &str) -> String {
     let (session, _temp_dir) = spawn_zsh_session();
-    let mut session = expectrl::session::log(session, std::io::stdout()).unwrap();
+    let mut session = expectrl::session::log(session, CapturedWriter).unwrap();
     if mode != "zsh" {
         session
             .send_line(&format!("typeset -g TREEIZSH_MODE={:?}", mode))
