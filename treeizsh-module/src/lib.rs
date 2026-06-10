@@ -1,4 +1,4 @@
-use zsh_module::zsh_module;
+use oxizsh::zsh_module;
 
 mod theme;
 
@@ -7,14 +7,14 @@ mod treeizsh {
     use std::collections::HashMap;
 
     use treeizsh::highlight::{HighlightEngine, LanguageConfig, Span};
-    use zsh_module::env::ParamSetValue;
-    use zsh_module::{Association, EnvAccess, Termination};
+    use oxizsh::env::ParamSetValue;
+    use oxizsh::{Association, EnvAccess, Termination};
 
     // ---------------------------------------------------------------------------
     // Helper: validate commands using the high-level Zsh table APIs
     // ---------------------------------------------------------------------------
 
-    fn is_valid_command(env: &zsh_module::Env, name: &str) -> bool {
+    fn is_valid_command(env: &oxizsh::Env, name: &str) -> bool {
         env.commands().contains_key(name)
             || env.functions().contains_key(name)
             || env.builtins().contains_key(name)

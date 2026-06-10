@@ -587,6 +587,56 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "oxizsh"
+version = "1.0.0"
+dependencies = [
+ "oxizsh-bindings",
+ "oxizsh-macros",
+]
+
+[[package]]
+name = "oxizsh-bindings"
+version = "0.2.2"
+dependencies = [
+ "bindgen",
+ "cc",
+ "glob",
+ "libc",
+ "oxizsh-build",
+ "pastey",
+ "quote",
+ "regex",
+ "syn",
+]
+
+[[package]]
+name = "oxizsh-build"
+version = "1.0.0"
+dependencies = [
+ "file-guard",
+ "flate2",
+ "tar",
+ "ureq",
+]
+
+[[package]]
+name = "oxizsh-macros"
+version = "0.1.99"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "oxizsh-test"
+version = "1.0.0"
+dependencies = [
+ "libtest-mimic",
+ "tempfile",
+]
+
+[[package]]
 name = "pastey"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -905,10 +955,10 @@ name = "tests"
 version = "0.0.0"
 dependencies = [
  "expectrl",
+ "oxizsh-test",
  "regex",
  "tempfile",
  "treeizsh-module",
- "zsh-module-test",
 ]
 
 [[package]]
@@ -1044,12 +1094,12 @@ dependencies = [
 name = "treeizsh-module"
 version = "0.1.0"
 dependencies = [
+ "oxizsh",
+ "oxizsh-build",
+ "oxizsh-test",
  "serde",
  "toml",
  "treeizsh",
- "zsh-module",
- "zsh-module-build",
- "zsh-module-test",
 ]
 
 [[package]]
@@ -1475,53 +1525,3 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
-
-[[package]]
-name = "zsh-module"
-version = "1.0.0"
-dependencies = [
- "zsh-module-bindings",
- "zsh-module-macros",
-]
-
-[[package]]
-name = "zsh-module-bindings"
-version = "0.2.2"
-dependencies = [
- "bindgen",
- "cc",
- "glob",
- "libc",
- "pastey",
- "quote",
- "regex",
- "syn",
- "zsh-module-build",
-]
-
-[[package]]
-name = "zsh-module-build"
-version = "1.0.0"
-dependencies = [
- "file-guard",
- "flate2",
- "tar",
- "ureq",
-]
-
-[[package]]
-name = "zsh-module-macros"
-version = "0.1.99"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "zsh-module-test"
-version = "1.0.0"
-dependencies = [
- "libtest-mimic",
- "tempfile",
-]

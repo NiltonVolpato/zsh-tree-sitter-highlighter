@@ -15,10 +15,10 @@ readme = "README.md"
 treeizsh = { path = "treeizsh" }
 treeizsh-module = { path = "treeizsh-module" }
 
-# External / Local zsh-module components
-zsh-module = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module" }
-zsh-module-build = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module-build" }
-zsh-module-test = { path = "/Users/nilton/Code/zsh-module-worktree/main/zsh-module-test" }
+# External / Local oxizsh components
+oxizsh = { path = "/Users/nilton/Code/zsh-module-worktree/main/oxizsh" }
+oxizsh-build = { path = "/Users/nilton/Code/zsh-module-worktree/main/oxizsh-build" }
+oxizsh-test = { path = "/Users/nilton/Code/zsh-module-worktree/main/oxizsh-test" }
 
 # Shared external dependencies
 anyhow = "1"

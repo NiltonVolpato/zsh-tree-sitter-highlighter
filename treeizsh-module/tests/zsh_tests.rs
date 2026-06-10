@@ -1,3 +1,3 @@
 fn main() {
-    zsh_module_test::run_tests("tests/highlight");
+    oxizsh_test::run_tests("tests/highlight");
 }

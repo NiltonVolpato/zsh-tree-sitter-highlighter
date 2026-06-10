@@ -13,15 +13,15 @@ crate-type = ["cdylib"]
 
 [dependencies]
 treeizsh.workspace = true
-zsh-module.workspace = true
+oxizsh.workspace = true
 toml.workspace = true
 serde.workspace = true
 
 [build-dependencies]
-zsh-module-build.workspace = true
+oxizsh-build.workspace = true
 
 [dev-dependencies]
-zsh-module-test.workspace = true
+oxizsh-test.workspace = true
 
 [[test]]
 name = "zsh_tests"

@@ -8,7 +8,7 @@ publish = false
 expectrl.workspace = true
 regex.workspace = true
 tempfile.workspace = true
-zsh-module-test.workspace = true
+oxizsh-test.workspace = true
 
 [dev-dependencies]
 treeizsh-module.workspace = true

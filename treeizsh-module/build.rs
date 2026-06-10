@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     // Call the standard setup first (this sets up linker args, cfgs, etc.)
-    zsh_module_build::setup_zsh_module();
+    oxizsh_build::setup_zsh_module();
 
     // Now, create symlinks for the custom library name "treeizsh"
     // (since our package name is "treeizsh-module" but our library name is "treeizsh").

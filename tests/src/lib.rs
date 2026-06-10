@@ -344,13 +344,13 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
     let theme_path = manifest_dir.join("highlight/test_ansidecode_theme.toml");
 
     // Build the dynamic library target explicitly to ensure it exists
-    zsh_module_test::build_module(workspace_root, Some("treeizsh-module"));
+    oxizsh_test::build_module(workspace_root, Some("treeizsh-module"));
 
     let temp_dir = tempfile::tempdir().unwrap();
     let install_dir = temp_dir.path();
 
     // Read the compile-time target profile directory
-    let target_profile_dir = zsh_module_test::target_profile_dir();
+    let target_profile_dir = oxizsh_test::target_profile_dir();
 
     // Run the manual installer script targeting the temp directory
     let install_script = workspace_root.join("scripts/manual-install.sh");

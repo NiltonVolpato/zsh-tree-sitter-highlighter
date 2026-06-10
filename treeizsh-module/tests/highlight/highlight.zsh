@@ -1,5 +1,5 @@
 setup() {
-  source "$ZSH_MODULE_TEST_SUPPORT/defs.zsh"
+  source "$OXIZSH_TEST_SUPPORT/defs.zsh"
   setup_module treeizsh
   zmodload treeizsh || {
       echo "Failed to load treeizsh" >&2
