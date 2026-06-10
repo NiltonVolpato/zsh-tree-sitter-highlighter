@@ -639,6 +639,7 @@ name = "oxizsh-test"
 version = "1.0.0"
 dependencies = [
  "libtest-mimic",
+ "oxizsh-build",
  "tempfile",
 ]
 
