@@ -336,6 +336,20 @@ pub fn print_colorized(text: &str, spans: &[(usize, usize, &'static str)]) {
     println!("Colorized: {}", output);
 }
 
+fn get_zsh_program() -> String {
+    if let Ok(v) = env::var("ZSH_BINARY") {
+        return v;
+    }
+    if let Ok(shell) = env::var("SHELL") {
+        if std::path::Path::new(&shell).file_name()
+            == Some(std::ffi::OsStr::new("zsh"))
+        {
+            return shell;
+        }
+    }
+    "zsh".to_string()
+}
+
 pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
     let manifest_dir = PathBuf::from(
         env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string()),
@@ -354,7 +368,7 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
 
     // Run the manual installer script targeting the temp directory
     let install_script = workspace_root.join("scripts/manual-install.sh");
-    let status = Command::new("zsh")
+    let status = Command::new(get_zsh_program())
         .args([
             "-c",
             format!(
@@ -401,7 +415,7 @@ set +e
     let zshrc_path = temp_dir.path().join(".zshrc");
     std::fs::write(&zshrc_path, zshrc_content).unwrap();
 
-    let mut cmd = Command::new("zsh");
+    let mut cmd = Command::new(get_zsh_program());
     cmd.arg("-d");
     cmd.env("TERM", "xterm-256color");
     cmd.env("ZDOTDIR", temp_dir.path());
