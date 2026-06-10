@@ -93,3 +93,46 @@ fn test_keywords_control_structures() {
         "<keyword>if</keyword> <function>true</function>; <keyword>then</keyword> <function>echo</function> yes; <keyword>fi</keyword>"
     );
 }
+
+#[test]
+fn test_relative_path_command() {
+    use expectrl::Expect;
+
+    let (mut session, temp_dir) = tests::spawn_zsh_session();
+    let script_path = temp_dir.path().join("script.sh");
+    std::fs::write(&script_path, "#!/bin/sh\necho hello\n").unwrap();
+    
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).unwrap();
+    }
+
+    session.send("./script.sh").unwrap();
+    session.send(b"\x0c").unwrap();
+    
+    // Wait for prompt
+    session.expect(expectrl::Regex(r"READY \[([0-9]+)\] % ")).unwrap();
+    
+    // Trigger abort/print highlights
+    session.send(b"\x07").unwrap();
+    let captures = session.expect(expectrl::Regex(r"READY \[([0-9]+)\] % ")).unwrap();
+    let captured = String::from_utf8_lossy(captures.before()).to_string();
+    let _ = session.send_line("exit");
+    
+    let result_markup = tests::parse_zle_highlight(&captured);
+    assert_eq!(
+        result_markup,
+        "<function>./script.sh</function>"
+    );
+}
+
+#[test]
+fn test_inline_function_definition() {
+    assert_eq!(
+        highlight_markup("bar_does_not_exist() { true; }; bar_does_not_exist"),
+        "<function>bar_does_not_exist</function>() { <function>true</function>; }; <function>bar_does_not_exist</function>"
+    );
+}

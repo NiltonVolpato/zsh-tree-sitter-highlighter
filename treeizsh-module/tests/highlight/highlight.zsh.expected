@@ -15,7 +15,6 @@
 78 82 fg=embedded
 85 87 fg=keyword
 91 95 fg=function
-91 95 fg=command.invalid
 96 103 fg=string
 97 102 fg=variable
 108 116 fg=embedded

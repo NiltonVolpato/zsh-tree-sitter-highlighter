@@ -14,11 +14,45 @@ mod treeizsh {
     // Helper: validate commands using the high-level Zsh table APIs
     // ---------------------------------------------------------------------------
 
-    fn is_valid_command(env: &oxizsh::Env, name: &str) -> bool {
+    fn is_path_executable(name: &str) -> bool {
+        let path = std::path::Path::new(name);
+        if !path.is_absolute() && !name.contains('/') {
+            return false;
+        }
+        if let Ok(metadata) = std::fs::metadata(path) {
+            if metadata.is_file() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    return metadata.permissions().mode() & 0o111 != 0;
+                }
+                #[cfg(not(unix))]
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    // TODO: Handle commands in relative PATH entries (like '.' or './bin') that are not hashed by Zsh.
+    // In Zsh, relative directory entries in $path are not pre-hashed in cmdnamtab (to avoid stale hashes on cd).
+    // Currently, commands like `test_local` in the CWD (when `.` is in PATH) are marked as invalid because they do
+    // not contain a `/` and are not in `env.commands()`.
+    // In the future, we could resolve this by parsing the relative directories in $path against $PWD or falling
+    // back to querying Zsh's built-in command type information (e.g. `type -w -- <cmd>`) similar to
+    // fast-syntax-highlighting.
+    fn is_valid_command(
+        env: &oxizsh::Env,
+        name: &str,
+        local_functions: &std::collections::HashSet<String>,
+    ) -> bool {
         env.commands().contains_key(name)
             || env.functions().contains_key(name)
             || env.builtins().contains_key(name)
             || env.aliases().contains_key(name)
+            || local_functions.contains(name)
+            || is_path_executable(name)
     }
 
     // ---------------------------------------------------------------------------
@@ -173,10 +207,14 @@ mod treeizsh {
 
             // Validate commands and add override spans for invalid ones (zsh mode only).
             if language == LanguageConfig::Zsh {
+                let local_functions = engine
+                    .extract_zsh_function_definitions(&full_source)
+                    .unwrap_or_default();
+
                 match engine.extract_zsh_commands(&full_source) {
                     Ok(commands) => {
                         for (start, end, name) in commands {
-                            if !is_valid_command(&env, &name) {
+                            if !is_valid_command(&env, &name, &local_functions) {
                                 spans.push(Span {
                                     start,
                                     end,

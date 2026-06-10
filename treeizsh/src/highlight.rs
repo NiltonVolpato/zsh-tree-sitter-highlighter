@@ -212,6 +212,34 @@ impl HighlightEngine {
         }
     }
 
+    /// Extract function names defined in the zsh source buffer.
+    pub fn extract_zsh_function_definitions(&self, source: &str) -> Result<std::collections::HashSet<String>> {
+        let language: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language)?;
+        let tree = parser.parse(source, None).context("zsh parsing failed")?;
+        let mut functions = std::collections::HashSet::new();
+        Self::walk_function_definitions(tree.root_node(), source, &mut functions);
+        Ok(functions)
+    }
+
+    fn walk_function_definitions(
+        node: tree_sitter::Node,
+        source: &str,
+        functions: &mut std::collections::HashSet<String>,
+    ) {
+        if node.kind() == "function_definition" {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let name = source[name_node.start_byte()..name_node.end_byte()].to_string();
+                functions.insert(name);
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::walk_function_definitions(child, source, functions);
+        }
+    }
+
     fn highlight_markdown(&self, source: &str) -> Result<Vec<Span>> {
         // Markdown requires trailing newline.
         let owned_source;

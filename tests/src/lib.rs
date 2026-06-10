@@ -405,6 +405,7 @@ set +e
     cmd.arg("-d");
     cmd.env("TERM", "xterm-256color");
     cmd.env("ZDOTDIR", temp_dir.path());
+    cmd.current_dir(temp_dir.path());
 
     let mut session = Session::spawn(cmd).expect("Failed to spawn zsh");
     session.set_echo(false).expect("Failed to set echo");
@@ -424,8 +425,10 @@ struct CapturedWriter;
 
 impl std::io::Write for CapturedWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let s = String::from_utf8_lossy(buf);
-        print!("{}", s);
+        if std::env::var("TREEIZSH_LOG").is_ok() {
+            let s = String::from_utf8_lossy(buf);
+            print!("{}", s);
+        }
         Ok(buf.len())
     }
 
