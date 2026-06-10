@@ -6,9 +6,9 @@ mod theme;
 mod treeish {
     use std::collections::HashMap;
 
+    use treeish::highlight::{HighlightEngine, LanguageConfig, Span};
     use zsh_module::env::ParamSetValue;
     use zsh_module::{Association, EnvAccess, Termination};
-    use treeish::highlight::{HighlightEngine, LanguageConfig, Span};
 
     // ---------------------------------------------------------------------------
     // Helper: validate commands using the high-level Zsh table APIs

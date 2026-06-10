@@ -1,11 +1,46 @@
 use expectrl::process::Termios;
+use expectrl::session::OsProcess;
 use expectrl::session::OsSession;
 use expectrl::{Expect, Regex, Session};
 use std::env;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
 
-pub const PROMPT: &str = "READY % ";
+const PROMPT_RE: Regex<&str> = Regex(r"READY \[([0-9]+)\] % ");
+
+fn check_result<S: Read>(
+    session: &mut Session<OsProcess, S>,
+    result: Result<expectrl::Captures, expectrl::Error>,
+) -> expectrl::Captures {
+    let captures = match result {
+        Ok(captures) => captures,
+        Err(e) => {
+            let mut output = String::new();
+            let _ = session.read_to_string(&mut output);
+            panic!(
+                "Zsh session failed (expect prompt): {:?}. Session output: {:?}",
+                e, output
+            );
+        }
+    };
+
+    if let Some(code_bytes) = captures.get(1) {
+        let code_str = String::from_utf8_lossy(code_bytes);
+        if let Ok(code) = code_str.parse::<i32>() {
+            if code != 0 {
+                let mut output = String::new();
+                let _ = session.read_to_string(&mut output);
+                panic!(
+                    "Zsh command failed with exit code {}. Session output: {:?}",
+                    code, output
+                );
+            }
+        }
+    }
+
+    captures
+}
 
 pub fn color_to_tag(color: u8) -> &'static str {
     match color {
@@ -67,10 +102,7 @@ pub fn parse_spans(stream: &str) -> (String, Vec<(usize, usize, &'static str)>) 
     let content = stream;
 
     // Filter out carriage returns
-    let filtered: String = content
-        .chars()
-        .filter(|&c| c != '\r')
-        .collect();
+    let filtered: String = content.chars().filter(|&c| c != '\r').collect();
 
     // Regex matches any CSI escape sequence: \x1b[ <parameters> <letter>
     let ansi_re = regex::Regex::new(r"\x1b\[([0-9;:]*)([a-zA-Z])").unwrap();
@@ -323,7 +355,15 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
     // Run the manual installer script targeting the temp directory
     let install_script = workspace_root.join("scripts/manual-install.sh");
     let status = Command::new("zsh")
-        .arg(install_script)
+        .args([
+            "-c",
+            format!(
+                "source {} 2>&1 > {}/install.log",
+                install_script.to_string_lossy(),
+                install_dir.to_string_lossy()
+            )
+            .as_str(),
+        ])
         .env("HOME", install_dir) // Set HOME to ZDOTDIR temp location
         .env("ZDOTDIR", install_dir)
         .env("INSTALL_DIR", install_dir)
@@ -337,20 +377,22 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
         .env("MODIFY_ZSHRC", "n") // Avoid interactive prompt
         .status()
         .expect("Failed to run manual installer script");
-    assert!(status.success(), "manual-install.sh failed");
+    assert!(
+        status.success(),
+        "manual-install.sh failed. check: {}/install.log",
+        install_dir.to_string_lossy()
+    );
 
     let integration_script = install_dir.join("treeish.zsh");
 
     let zshrc_content = format!(
         r#"
-PROMPT='READY %% '
+PROMPT='READY [%?] %% '
 zmodload zsh/zle
 source {:?}
 typeset -g TREEISH_THEME={:?}
 abort_command() {{ zle -I; BUFFER="" }}
 zle -N abort_command; bindkey "^G" abort_command
-rehash
-hash uname
 "#,
         integration_script, theme_path
     );
@@ -370,27 +412,36 @@ hash uname
         .set_window_size(80, 24)
         .expect("Failed to set window size");
 
-    session.expect(Regex(PROMPT)).unwrap();
+    let result = session.expect(PROMPT_RE);
+    check_result(&mut session, result);
 
     (session, temp_dir)
 }
 
 pub fn highlight_buffer_in_mode(buffer: &str, mode: &str) -> String {
-    let (mut session, _temp_dir) = spawn_zsh_session();
+    let (session, _temp_dir) = spawn_zsh_session();
+    let mut session = expectrl::session::log(session, std::io::stdout()).unwrap();
     if mode != "zsh" {
-        session.send_line(&format!("typeset -g TREEISH_MODE={:?}", mode)).unwrap();
-        session.expect(Regex(PROMPT)).unwrap();
+        session
+            .send_line(&format!("typeset -g TREEISH_MODE={:?}", mode))
+            .unwrap();
+        let result = session.expect(PROMPT_RE);
+        check_result(&mut session, result);
     }
     if buffer.contains('\n') {
-        session.send(&format!("\x1b[200~{}\x1b[201~", buffer)).unwrap();
+        session
+            .send(&format!("\x1b[200~{}\x1b[201~", buffer))
+            .unwrap();
     } else {
         session.send(buffer).unwrap();
     }
     session.send(b"\x0c").unwrap();
-    session.expect(Regex(PROMPT)).unwrap(); // Ignore all the terminal updates up to the prompt.
+    let result = session.expect(PROMPT_RE);
+    check_result(&mut session, result);
     session.send(b"\x07").unwrap();
 
-    let captures = session.expect(Regex(PROMPT)).unwrap();
+    let result = session.expect(PROMPT_RE);
+    let captures = check_result(&mut session, result);
     let captured = String::from_utf8_lossy(captures.before()).to_string();
     let _ = session.send_line("exit");
     captured

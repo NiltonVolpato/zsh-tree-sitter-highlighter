@@ -20,12 +20,12 @@ if ! zmodload -F treeish &>/dev/null; then
 
     if (( release_mode )); then
         # Developer fallback: check target/release
-        module_dir="$script_dir/../target/release"
+        module_dir="$(realpath $script_dir/../target/release)"
         module_path+=("$module_dir")
         zmodload treeish && loaded=1
     elif (( debug_mode )); then
         # Developer fallback: check target/debug
-        module_dir="$script_dir/../target/debug"
+        module_dir="$(realpath $script_dir/../target/debug)"
         module_path+=("$module_dir")
         zmodload treeish && loaded=1
     else
