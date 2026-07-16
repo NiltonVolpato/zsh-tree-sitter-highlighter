@@ -44,7 +44,7 @@ impl HighlightEngine {
         let md_inline_lang: tree_sitter::Language = tree_sitter_md::INLINE_LANGUAGE.into();
 
         let zsh_query_text = format!(
-            "{}\n(variable_ref (simple_variable_name)) @variable\n",
+            "{}\n(variable_ref (simple_variable_name)) @variable\n(ERROR) @error\n",
             tree_sitter_zsh::HIGHLIGHT_QUERY
         );
         let zsh_query = tree_sitter::Query::new(&zsh_lang, &zsh_query_text)

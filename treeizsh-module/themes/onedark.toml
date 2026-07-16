@@ -1,4 +1,5 @@
 "command.invalid" = { fg = "red", modifiers = ["bold"] }
+"error" = { bg = "#6b0000", modifiers = ["underline"] }
 "comment" = { fg = "light-gray", modifiers = ["italic"] }
 "constant" = { fg = "cyan" }
 "embedded" = { fg = "cyan" }

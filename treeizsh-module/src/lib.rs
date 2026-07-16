@@ -7,8 +7,8 @@ mod treeizsh {
     use std::collections::HashMap;
 
     use treeizsh::highlight::{HighlightEngine, LanguageConfig, Span};
-    use oxizsh::env::ParamSetValue;
-    use oxizsh::{Association, EnvAccess, Termination};
+    use oxizsh::ParamSetValue;
+    use oxizsh::{Association, Termination};
 
     // ---------------------------------------------------------------------------
     // Helper: validate commands using the high-level Zsh table APIs
@@ -85,8 +85,11 @@ mod treeizsh {
         // Builtin: treeizsh_highlight
         // ---------------------------------------------------------------------------
 
-        pub fn treeizsh_highlight(&mut self, _args: &[&str]) -> Result<(), Termination> {
-            let env = self.env();
+        pub fn treeizsh_highlight(
+            &mut self,
+            env: &oxizsh::Env,
+            _args: &[&str],
+        ) -> Result<(), Termination> {
 
             // Lazy-initialize the highlight engine on first call.
             let engine = match self.engine.as_mut() {
@@ -214,7 +217,7 @@ mod treeizsh {
                 match engine.extract_zsh_commands(&full_source) {
                     Ok(commands) => {
                         for (start, end, name) in commands {
-                            if !is_valid_command(&env, &name, &local_functions) {
+                            if !is_valid_command(env, &name, &local_functions) {
                                 spans.push(Span {
                                     start,
                                     end,

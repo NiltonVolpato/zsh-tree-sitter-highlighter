@@ -154,6 +154,7 @@ pub fn load_theme_file(path: &str) -> Result<HashMap<String, String>, String> {
         "text.uri",
         "variable",
         "command.invalid",
+        "error",
         "path",
         "path.directory",
     ];
@@ -296,6 +297,7 @@ mod tests {
             "text.uri",
             "variable",
             "command.invalid",
+            "error",
             "path",
             "path.directory",
         ]
