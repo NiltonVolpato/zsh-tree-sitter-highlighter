@@ -370,6 +370,7 @@ pub fn spawn_zsh_session() -> (OsSession, tempfile::TempDir) {
         .env("ZDOTDIR", install_dir)
         .env("INSTALL_DIR", install_dir)
         .env("SKIP_BUILD", "1")
+        .env("ZSH_BINARY", oxizsh_test::zsh_binary())
         .env(
             "CARGO_BUILD_DIR",
             target_profile_dir
@@ -418,6 +419,11 @@ set +e
         .expect("Failed to set window size");
 
     let result = session.expect(PROMPT_RE);
+    if std::env::var("TREEIZSH_LOG").is_ok() {
+        if let Ok(ref captures) = result {
+            println!("Startup output:\n{}", String::from_utf8_lossy(captures.before()));
+        }
+    }
     check_result(&mut session, result);
 
     (session, temp_dir)

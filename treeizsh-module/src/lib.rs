@@ -6,9 +6,8 @@ mod theme;
 mod treeizsh {
     use std::collections::HashMap;
 
+    use oxizsh_module::Termination;
     use treeizsh::highlight::{HighlightEngine, LanguageConfig, Span};
-    use oxizsh::ParamSetValue;
-    use oxizsh::{Association, Termination};
 
     // ---------------------------------------------------------------------------
     // Helper: validate commands using the high-level Zsh table APIs
@@ -42,15 +41,20 @@ mod treeizsh {
     // In the future, we could resolve this by parsing the relative directories in $path against $PWD or falling
     // back to querying Zsh's built-in command type information (e.g. `type -w -- <cmd>`) similar to
     // fast-syntax-highlighting.
+    fn is_in_assoc(env: &oxizsh::Env, base: &str, key: &str) -> bool {
+        let value: Option<String> = env.get_index(base, key).unwrap_or(None);
+        value.is_some()
+    }
+
     fn is_valid_command(
         env: &oxizsh::Env,
         name: &str,
         local_functions: &std::collections::HashSet<String>,
     ) -> bool {
-        env.commands().contains_key(name)
-            || env.functions().contains_key(name)
-            || env.builtins().contains_key(name)
-            || env.aliases().contains_key(name)
+        is_in_assoc(env, "commands", name)
+            || is_in_assoc(env, "functions", name)
+            || is_in_assoc(env, "builtins", name)
+            || is_in_assoc(env, "aliases", name)
             || local_functions.contains(name)
             || is_path_executable(name)
     }
@@ -90,7 +94,6 @@ mod treeizsh {
             env: &oxizsh::Env,
             _args: &[&str],
         ) -> Result<(), Termination> {
-
             // Lazy-initialize the highlight engine on first call.
             let engine = match self.engine.as_mut() {
                 Some(e) => e,
@@ -98,10 +101,8 @@ mod treeizsh {
                     let e = match HighlightEngine::new() {
                         Ok(e) => e,
                         Err(err) => {
-                            let _ = env.set(
-                                "treeizsh_error",
-                                ParamSetValue::Scalar(&format!("engine init failed: {}", err)),
-                            );
+                            let _ =
+                                env.set("treeizsh_error", &format!("engine init failed: {}", err));
                             return Ok(());
                         }
                     };
@@ -111,62 +112,36 @@ mod treeizsh {
             };
 
             // Read ZLE and environment state.
-            let buffer = env
-                .get("BUFFER")
-                .and_then(|p| p.as_scalar().map(|s| s.into_owned()))
-                .ok()
-                .unwrap_or_default();
-            let prebuffer = env
-                .get("PREBUFFER")
-                .and_then(|p| p.as_scalar().map(|s| s.into_owned()))
-                .ok()
-                .unwrap_or_default();
-            let pwd = env
-                .get("PWD")
-                .and_then(|p| p.as_scalar().map(|s| s.into_owned()))
-                .ok();
+            let buffer = env.get::<String>("BUFFER").unwrap_or_default();
+            let prebuffer = env.get::<String>("PREBUFFER").unwrap_or_default();
+            let pwd = env.get::<String>("PWD").ok();
 
             // Determine language mode.
             let mode = env
-                .get("TREEIZSH_MODE")
-                .and_then(|p| p.as_scalar().map(|s| s.into_owned()))
-                .ok()
-                .unwrap_or_else(|| "zsh".into());
+                .get::<String>("TREEIZSH_MODE")
+                .unwrap_or_else(|_| "zsh".into());
             let language = match mode.as_str() {
                 "md" | "markdown" => LanguageConfig::Markdown,
                 _ => LanguageConfig::Zsh,
             };
 
             // Read theme path.
-            let theme_param = match env.get("TREEIZSH_THEME") {
-                Ok(p) => p,
-                Err(_) => {
-                    let _ = env.set(
-                        "treeizsh_error",
-                        ParamSetValue::Scalar(
-                            "TREEIZSH_THEME not set (did you source treeizsh.zsh?)",
-                        ),
-                    );
-                    return Ok(());
-                }
-            };
-
-            let theme_path_str = match theme_param.as_scalar() {
-                Ok(s) => s.into_owned(),
-                Err(_) => {
-                    let _ = env.set(
-                        "treeizsh_error",
-                        ParamSetValue::Scalar("TREEIZSH_THEME is not a string"),
-                    );
+            let theme_path_str = match env.get::<String>("TREEIZSH_THEME") {
+                Ok(s) => s,
+                Err(e) => {
+                    let msg = match e {
+                        oxizsh::Error::NotFound(_) => {
+                            "TREEIZSH_THEME not set (did you source treeizsh.zsh?)"
+                        }
+                        _ => "TREEIZSH_THEME is not a string",
+                    };
+                    let _ = env.set("treeizsh_error", msg);
                     return Ok(());
                 }
             };
 
             if theme_path_str.is_empty() {
-                let _ = env.set(
-                    "treeizsh_error",
-                    ParamSetValue::Scalar("TREEIZSH_THEME is empty"),
-                );
+                let _ = env.set("treeizsh_error", "TREEIZSH_THEME is empty");
                 return Ok(());
             }
 
@@ -183,10 +158,7 @@ mod treeizsh {
                         self.theme_path = Some(theme_path_str);
                     }
                     Err(err) => {
-                        let _ = env.set(
-                            "treeizsh_error",
-                            ParamSetValue::Scalar(&format!("theme load failed: {}", err)),
-                        );
+                        let _ = env.set("treeizsh_error", &format!("theme load failed: {}", err));
                         return Ok(());
                     }
                 }
@@ -200,10 +172,7 @@ mod treeizsh {
             let mut spans = match engine.highlight_with_pwd(language, &full_source, pwd_str) {
                 Ok(s) => s,
                 Err(err) => {
-                    let _ = env.set(
-                        "treeizsh_error",
-                        ParamSetValue::Scalar(&format!("highlight failed: {}", err)),
-                    );
+                    let _ = env.set("treeizsh_error", &format!("highlight failed: {}", err));
                     return Ok(());
                 }
             };
@@ -229,7 +198,7 @@ mod treeizsh {
                     Err(err) => {
                         let _ = env.set(
                             "treeizsh_error",
-                            ParamSetValue::Scalar(&format!("command extraction failed: {}", err)),
+                            &format!("command extraction failed: {}", err),
                         );
                         return Ok(());
                     }
@@ -262,14 +231,8 @@ mod treeizsh {
             }
 
             // Write the result array for the zsh adapter to pick up.
-            if let Err(e) = env.set(
-                "treeizsh_regions",
-                ParamSetValue::Array(Box::new(regions.into_iter())),
-            ) {
-                let _ = env.set(
-                    "treeizsh_error",
-                    ParamSetValue::Scalar(&format!("failed to set regions: {:?}", e)),
-                );
+            if let Err(e) = env.set("treeizsh_regions", regions) {
+                let _ = env.set("treeizsh_error", &format!("failed to set regions: {:?}", e));
             }
 
             Ok(())

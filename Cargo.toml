@@ -16,9 +16,10 @@ treeizsh = { path = "treeizsh" }
 treeizsh-module = { path = "treeizsh-module" }
 
 # External / Local oxizsh components
-oxizsh = { path = "/Users/nilton/Code/zsh-module-worktree/fix-crashes/oxizsh" }
-oxizsh-build = { path = "/Users/nilton/Code/zsh-module-worktree/fix-crashes/oxizsh-build" }
-oxizsh-test = { path = "/Users/nilton/Code/zsh-module-worktree/fix-crashes/oxizsh-test" }
+oxizsh = { path = "/Users/nilton/Code/zsh-module-worktree/main/oxizsh" }
+oxizsh-module = { path = "/Users/nilton/Code/zsh-module-worktree/main/module" }
+oxizsh-build = { path = "/Users/nilton/Code/zsh-module-worktree/main/oxizsh-build" }
+oxizsh-test = { path = "/Users/nilton/Code/zsh-module-worktree/main/oxizsh-test" }
 
 # Shared external dependencies
 anyhow = "1"
@@ -35,3 +36,13 @@ expectrl = "0.9"
 regex = "1.10"
 tempfile = "3.8"
 googletest = "0.14.2"
+
+[profile.release]
+codegen-units = 1           # reduces binary size by ~2%
+debug = "full"              # No one needs an undebuggable release binary
+lto = true                  # reduces binary size by ~14%
+opt-level = "s"             # reduces binary size by ~25%
+panic = "abort"             # reduces binary size by ~50% in combination with -Zbuild-std-features=panic_immediate_abort
+split-debuginfo = "packed"  # generates a separate *.dwp/*.dSYM so the binary can get stripped
+strip = "symbols"           # See split-debuginfo - allows us to drop the size by ~65%
+incremental = true          # Improves re-compile times

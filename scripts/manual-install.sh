@@ -13,7 +13,7 @@ fi
 
 # Default installation directory
 if [[ -z "${INSTALL_DIR:-}" ]]; then
-    INSTALL_DIR="$XDG_DATA_HOME/treeizsh"
+    INSTALL_DIR="$XDG_DATA_HOME/oxizsh"
     if ((interactive)) && [[ -t 0 ]]; then
         print -P "‣ %F{10}Enter installation directory (or press Enter; Ctrl-C to cancel):%f"
         vared -p "> " -e INSTALL_DIR
@@ -79,17 +79,20 @@ fi
 print -P "%B‣ Setting up installation directory at: %F{cyan}${INSTALL_DIR}%f%b"
 mkdir -p "$INSTALL_DIR/$zsh_version"
 
+local build_path="${WORKSPACE_DIR}/${cargo_build_dir}"
+[[ "$cargo_build_dir" == /* ]] && build_path="${cargo_build_dir}"
+
 # Determine OS type and copy dynamic library using cp -l with fallback
 rm -f "$INSTALL_DIR/$zsh_version/treeizsh.so" "$INSTALL_DIR/$zsh_version/treeizsh.bundle"
 if [[ "$OSTYPE" == "darwin"* ]]; then
     print -P "‣ Installing for macOS..."
-    cp -l "$WORKSPACE_DIR/${cargo_build_dir}/libtreeizsh.dylib" "$INSTALL_DIR/$zsh_version/treeizsh.so" 2>/dev/null ||
-        cp "$WORKSPACE_DIR/${cargo_build_dir}/libtreeizsh.dylib" "$INSTALL_DIR/$zsh_version/treeizsh.so"
+    cp -l "$build_path/libtreeizsh.dylib" "$INSTALL_DIR/$zsh_version/treeizsh.so" 2>/dev/null ||
+        cp "$build_path/libtreeizsh.dylib" "$INSTALL_DIR/$zsh_version/treeizsh.so"
     ln -sf treeizsh.so "$INSTALL_DIR/$zsh_version/treeizsh.bundle"
 else
     print -P "‣ Installing for Linux/Unix..."
-    cp -l "$WORKSPACE_DIR/${cargo_build_dir}/libtreeizsh.so" "$INSTALL_DIR/$zsh_version/treeizsh.so" 2>/dev/null ||
-        cp "$WORKSPACE_DIR/${cargo_build_dir}/libtreeizsh.so" "$INSTALL_DIR/$zsh_version/treeizsh.so"
+    cp -l "$build_path/libtreeizsh.so" "$INSTALL_DIR/$zsh_version/treeizsh.so" 2>/dev/null ||
+        cp "$build_path/libtreeizsh.so" "$INSTALL_DIR/$zsh_version/treeizsh.so"
 fi
 
 print -P "‣ Copying integration script and themes..."
