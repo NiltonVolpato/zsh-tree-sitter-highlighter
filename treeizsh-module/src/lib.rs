@@ -46,16 +46,11 @@ mod treeizsh {
         value.is_some()
     }
 
-    fn is_valid_command(
-        env: &oxizsh::Env,
-        name: &str,
-        local_functions: &std::collections::HashSet<String>,
-    ) -> bool {
+    fn is_valid_command(env: &oxizsh::Env, name: &str) -> bool {
         is_in_assoc(env, "commands", name)
             || is_in_assoc(env, "functions", name)
             || is_in_assoc(env, "builtins", name)
             || is_in_assoc(env, "aliases", name)
-            || local_functions.contains(name)
             || is_path_executable(name)
     }
 
@@ -63,12 +58,29 @@ mod treeizsh {
     // Module state & Component
     // ---------------------------------------------------------------------------
 
+    /// Everything the highlight output depends on. When this matches the previous
+    /// call, the previous regions are still correct (cursor moves, plain redraws).
+    #[derive(PartialEq, Eq)]
+    struct InputKey {
+        source: String,
+        prebuffer_len: usize,
+        pwd: Option<String>,
+        language: LanguageConfig,
+        theme_path: String,
+    }
+
     #[zsh_component]
     #[derive(Default)]
     pub struct Highlighter {
         engine: Option<HighlightEngine>,
         theme_path: Option<String>,
         theme_cache: HashMap<String, String>,
+        /// Input of the last successful highlight, and the regions it produced.
+        last_input: Option<InputKey>,
+        last_regions: Vec<String>,
+        /// Command name -> valid, for names not defined in the buffer itself.
+        /// Cleared per command line and on directory change.
+        command_cache: HashMap<String, bool>,
     }
 
     impl std::fmt::Debug for Highlighter {
@@ -76,6 +88,7 @@ mod treeizsh {
             f.debug_struct("Highlighter")
                 .field("theme_path", &self.theme_path)
                 .field("theme_cache_len", &self.theme_cache.len())
+                .field("command_cache_len", &self.command_cache.len())
                 .finish()
         }
     }
@@ -85,31 +98,36 @@ mod treeizsh {
             Self::default()
         }
 
+        /// Forget everything cached about the outside world: command validity,
+        /// path lookups, and the last result.
+        fn reset(&mut self) {
+            self.last_input = None;
+            self.last_regions.clear();
+            self.command_cache.clear();
+            if let Some(engine) = self.engine.as_mut() {
+                engine.clear_caches();
+            }
+        }
+
         // ---------------------------------------------------------------------------
         // Builtin: treeizsh_highlight
         // ---------------------------------------------------------------------------
 
+        /// `treeizsh_highlight`: set `treeizsh_regions` for the current
+        /// `PREBUFFER`/`BUFFER`, and `treeizsh_changed` to 0 when they are the
+        /// regions from the previous call (nothing to redo), else 1.
+        ///
+        /// `treeizsh_highlight --reset`: drop all caches; call at the start of
+        /// each command line so new commands and files are noticed.
         pub fn treeizsh_highlight(
             &mut self,
             env: &oxizsh::Env,
-            _args: &[&str],
+            args: &[&str],
         ) -> Result<(), Termination> {
-            // Lazy-initialize the highlight engine on first call.
-            let engine = match self.engine.as_mut() {
-                Some(e) => e,
-                None => {
-                    let e = match HighlightEngine::new() {
-                        Ok(e) => e,
-                        Err(err) => {
-                            let _ =
-                                env.set("treeizsh_error", &format!("engine init failed: {}", err));
-                            return Ok(());
-                        }
-                    };
-                    self.engine = Some(e);
-                    self.engine.as_mut().unwrap()
-                }
-            };
+            if args.first() == Some(&"--reset") {
+                self.reset();
+                return Ok(());
+            }
 
             // Read ZLE and environment state.
             let buffer = env.get::<String>("BUFFER").unwrap_or_default();
@@ -145,83 +163,115 @@ mod treeizsh {
                 return Ok(());
             }
 
-            // Load and cache the theme if needed
-            let needs_reload = match &self.theme_path {
-                Some(cached_path) => cached_path != &theme_path_str || self.theme_cache.is_empty(),
-                None => true,
+            let input = InputKey {
+                prebuffer_len: prebuffer.chars().count(),
+                source: prebuffer + &buffer,
+                pwd,
+                language,
+                theme_path: theme_path_str,
             };
+            if self.last_input.as_ref() == Some(&input) {
+                let _ = env.set("treeizsh_regions", self.last_regions.as_slice());
+                let _ = env.set("treeizsh_changed", 0i64);
+                return Ok(());
+            }
+            if self
+                .last_input
+                .as_ref()
+                .is_some_and(|last| last.pwd != input.pwd)
+            {
+                // Relative command paths (./script) resolve differently now.
+                self.command_cache.clear();
+            }
+            self.last_input = None;
 
-            if needs_reload {
-                match crate::theme::load_theme_file(&theme_path_str) {
-                    Ok(cache) => {
-                        self.theme_cache = cache;
-                        self.theme_path = Some(theme_path_str);
-                    }
-                    Err(err) => {
-                        let _ = env.set("treeizsh_error", &format!("theme load failed: {}", err));
+            match self.compute_regions(env, &input) {
+                Ok(regions) => {
+                    if let Err(e) = env.set("treeizsh_regions", regions.as_slice()) {
+                        let _ =
+                            env.set("treeizsh_error", format!("failed to set regions: {:?}", e));
                         return Ok(());
                     }
+                    let _ = env.set("treeizsh_changed", 1i64);
+                    self.last_regions = regions;
+                    self.last_input = Some(input);
+                }
+                Err(msg) => {
+                    let _ = env.set("treeizsh_error", msg);
                 }
             }
+            Ok(())
+        }
 
-            let full_source = format!("{}{}", prebuffer, buffer);
-            let prebuffer_char_len = prebuffer.chars().count();
+        /// Highlight `input` and turn the spans into `region_highlight` entries.
+        fn compute_regions(
+            &mut self,
+            env: &oxizsh::Env,
+            input: &InputKey,
+        ) -> Result<Vec<String>, String> {
+            // Lazy-initialize the highlight engine on first call.
+            if self.engine.is_none() {
+                let engine =
+                    HighlightEngine::new().map_err(|err| format!("engine init failed: {}", err))?;
+                self.engine = Some(engine);
+            }
+            let engine = self.engine.as_mut().unwrap();
 
-            // Run tree-sitter highlighting (static + dynamic path resolution).
-            let pwd_str = pwd.as_deref();
-            let mut spans = match engine.highlight_with_pwd(language, &full_source, pwd_str) {
-                Ok(s) => s,
-                Err(err) => {
-                    let _ = env.set("treeizsh_error", &format!("highlight failed: {}", err));
-                    return Ok(());
-                }
-            };
+            // Load and cache the theme if needed.
+            if self.theme_path.as_ref() != Some(&input.theme_path) || self.theme_cache.is_empty() {
+                self.theme_cache = crate::theme::load_theme_file(&input.theme_path)
+                    .map_err(|err| format!("theme load failed: {}", err))?;
+                self.theme_path = Some(input.theme_path.clone());
+            }
 
-            // Validate commands and add override spans for invalid ones (zsh mode only).
-            if language == LanguageConfig::Zsh {
-                let local_functions = engine
-                    .extract_zsh_function_definitions(&full_source)
-                    .unwrap_or_default();
-
-                match engine.extract_zsh_commands(&full_source) {
-                    Ok(commands) => {
-                        for (start, end, name) in commands {
-                            if !is_valid_command(env, &name, &local_functions) {
-                                spans.push(Span {
-                                    start,
-                                    end,
-                                    style: "command.invalid".to_string(),
-                                });
+            let mut spans = match input.language {
+                LanguageConfig::Markdown => engine
+                    .highlight(LanguageConfig::Markdown, &input.source)
+                    .map_err(|err| format!("highlight failed: {}", err))?,
+                LanguageConfig::Zsh => {
+                    let analysis = engine
+                        .analyze_zsh(&input.source, input.pwd.as_deref())
+                        .map_err(|err| format!("highlight failed: {}", err))?;
+                    let mut spans = analysis.spans;
+                    // Mark commands that zsh can't run.
+                    for command in analysis.commands {
+                        if analysis.local_functions.contains(&command.name) {
+                            continue;
+                        }
+                        let valid = match self.command_cache.get(&command.name) {
+                            Some(&valid) => valid,
+                            None => {
+                                let valid = is_valid_command(env, &command.name);
+                                self.command_cache.insert(command.name.clone(), valid);
+                                valid
                             }
+                        };
+                        if !valid {
+                            spans.push(Span {
+                                start: command.start,
+                                end: command.end,
+                                style: "command.invalid".to_string(),
+                            });
                         }
                     }
-                    Err(err) => {
-                        let _ = env.set(
-                            "treeizsh_error",
-                            &format!("command extraction failed: {}", err),
-                        );
-                        return Ok(());
-                    }
+                    spans
                 }
-            }
+            };
 
             // Sort: by start position, and for equal starts longer spans first so that
             // "last wins" gives precedence to more specific spans.
             spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
 
-            // Shift coordinates from full_source to buffer-only, filter prebuffer spans,
-            // and map capture names to theme attributes.
-            let mut regions: Vec<String> = Vec::new();
+            // Shift coordinates from the full source to buffer-only, drop prebuffer
+            // spans, and map capture names to theme attributes.
+            let prebuffer_len = input.prebuffer_len;
+            let mut regions = Vec::new();
             for span in spans {
-                if span.end <= prebuffer_char_len {
+                if span.end <= prebuffer_len {
                     continue;
                 }
-                let start = if span.start < prebuffer_char_len {
-                    0
-                } else {
-                    span.start - prebuffer_char_len
-                };
-                let end = span.end - prebuffer_char_len;
+                let start = span.start.saturating_sub(prebuffer_len);
+                let end = span.end - prebuffer_len;
                 if start >= end {
                     continue;
                 }
@@ -229,13 +279,7 @@ mod treeizsh {
                     regions.push(format!("{} {} {}", start, end, style));
                 }
             }
-
-            // Write the result array for the zsh adapter to pick up.
-            if let Err(e) = env.set("treeizsh_regions", regions) {
-                let _ = env.set("treeizsh_error", &format!("failed to set regions: {:?}", e));
-            }
-
-            Ok(())
+            Ok(regions)
         }
     }
 }

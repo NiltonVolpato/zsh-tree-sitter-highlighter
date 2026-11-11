@@ -65,9 +65,30 @@
 === test_prebuffer ===
 0 4 fg=function
 
+=== test_prebuffer_split_is_part_of_input ===
+changed=1
+0 2 fg=function
+changed=1
+0 4 fg=function
+7 9 fg=function
+
+=== test_reset_rechecks_commands ===
+0 17 fg=function
+0 17 fg=command.invalid
+0 17 fg=function
+0 17 fg=command.invalid
+0 17 fg=function
+
 === test_simple_command ===
 0 4 fg=function
 11 20 fg=comment
+
+=== test_unchanged_input_reuses_regions ===
+changed=1
+0 4 fg=function
+changed=0
+0 4 fg=function
+changed=1
 
 === test_variable ===
 0 4 fg=function

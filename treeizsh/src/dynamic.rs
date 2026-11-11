@@ -1,7 +1,7 @@
-use anyhow::Result;
-use std::path::Path;
+//! Dynamic (filesystem-dependent) highlighting: which words name existing paths.
 
-use crate::highlight::Span;
+use std::collections::HashMap;
+use std::path::Path;
 
 /// Result of looking up a path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10,183 +10,167 @@ pub enum PathType {
     Directory,
 }
 
-/// Environment for dynamic lookups.
-pub struct LookupEnv {
-    pub resolve_path: Box<dyn Fn(&str) -> Option<PathType> + Send + Sync>,
+impl PathType {
+    /// The capture name used to style a word naming this kind of path.
+    pub fn style(self) -> &'static str {
+        match self {
+            PathType::File => "path",
+            PathType::Directory => "path.directory",
+        }
+    }
 }
 
-impl Default for LookupEnv {
+/// Resolves `(path, pwd)` to the kind of filesystem entry it names, if any.
+pub type ResolvePath = Box<dyn Fn(&str, Option<&str>) -> Option<PathType> + Send + Sync>;
+
+/// Memoizes path lookups so each word is `stat`ed once, not on every keystroke.
+///
+/// Results are keyed by the word's text and dropped whenever the working
+/// directory changes (relative paths resolve differently) or on [`clear`](Self::clear).
+pub struct PathCache {
+    resolve: ResolvePath,
+    pwd: Option<String>,
+    cache: HashMap<String, Option<PathType>>,
+}
+
+impl Default for PathCache {
     fn default() -> Self {
-        Self {
-            resolve_path: Box::new(real_resolve_path(None)),
-        }
+        Self::new(Box::new(resolve_path))
     }
 }
 
-impl LookupEnv {
-    /// Create a LookupEnv with a specific working directory for relative path resolution.
-    pub fn with_pwd(pwd: &str) -> Self {
-        let pwd = pwd.to_string();
+impl PathCache {
+    pub fn new(resolve: ResolvePath) -> Self {
         Self {
-            resolve_path: Box::new(real_resolve_path(Some(pwd))),
+            resolve,
+            pwd: None,
+            cache: HashMap::new(),
         }
+    }
+
+    /// The kind of path `text` names relative to `pwd`, or `None` if nothing
+    /// exists there.
+    pub fn lookup(&mut self, text: &str, pwd: Option<&str>) -> Option<PathType> {
+        if text.is_empty() {
+            return None;
+        }
+        if self.pwd.as_deref() != pwd {
+            self.cache.clear();
+            self.pwd = pwd.map(str::to_owned);
+        }
+        if let Some(&hit) = self.cache.get(text) {
+            return hit;
+        }
+        let result = (self.resolve)(text, pwd);
+        self.cache.insert(text.to_owned(), result);
+        result
+    }
+
+    /// Forget every cached lookup (e.g. at the start of a new command line).
+    pub fn clear(&mut self) {
+        self.cache.clear();
     }
 }
 
-fn real_resolve_path(pwd: Option<String>) -> impl Fn(&str) -> Option<PathType> {
-    move |path: &str| {
-        let expanded = if path.starts_with('~') {
-            if let Some(home) = std::env::var_os("HOME") {
-                let home_str = home.to_string_lossy();
-                if path.len() == 1 {
-                    home_str.into_owned()
-                } else if path.starts_with("~/") {
-                    format!("{}{}", home_str, &path[1..])
-                } else {
-                    path.to_string()
-                }
+/// Look `path` up on the real filesystem, resolving `~` and relative paths.
+pub fn resolve_path(path: &str, pwd: Option<&str>) -> Option<PathType> {
+    let expanded = if path.starts_with('~') {
+        if let Some(home) = std::env::var_os("HOME") {
+            let home_str = home.to_string_lossy();
+            if path.len() == 1 {
+                home_str.into_owned()
+            } else if let Some(rest) = path.strip_prefix('~').filter(|r| r.starts_with('/')) {
+                format!("{home_str}{rest}")
             } else {
                 path.to_string()
             }
-        } else if path.starts_with("./") || path.starts_with("../") {
-            // Resolve relative paths using the provided pwd
-            if let Some(ref pwd) = pwd {
-                format!("{}/{}", pwd.trim_end_matches('/'), path)
-            } else {
-                path.to_string()
-            }
-        } else if path.contains('/') && pwd.is_some() {
-            // Bare relative path like "foo/bar" — resolve against pwd
-            format!("{}/{}", pwd.as_ref().unwrap().trim_end_matches('/'), path)
         } else {
             path.to_string()
-        };
-        let p = Path::new(&expanded);
-        if p.is_dir() {
-            Some(PathType::Directory)
-        } else if p.is_file() {
-            Some(PathType::File)
-        } else {
-            None
         }
+    } else if path.starts_with('/') {
+        path.to_string()
+    } else if let Some(pwd) = pwd {
+        // Relative path (`x`, `./x`, `../x`, `foo/bar`) — resolve against pwd.
+        format!("{}/{}", pwd.trim_end_matches('/'), path)
+    } else {
+        path.to_string()
+    };
+    let p = Path::new(&expanded);
+    if p.is_dir() {
+        Some(PathType::Directory)
+    } else if p.is_file() {
+        Some(PathType::File)
+    } else {
+        None
     }
-}
-
-/// Run dynamic path highlighting on zsh source and return additional spans.
-/// Accepts a pre-parsed tree to avoid double-parsing.
-pub fn dynamic_highlight_zsh(
-    tree: &tree_sitter::Tree,
-    source: &str,
-    lookups: &LookupEnv,
-) -> Result<Vec<Span>> {
-    let mut spans = Vec::new();
-
-    let root = tree.root_node();
-    walk_node(root, source, lookups, &mut spans);
-
-    Ok(spans)
-}
-
-fn walk_node(node: tree_sitter::Node, source: &str, lookups: &LookupEnv, spans: &mut Vec<Span>) {
-    match node.kind() {
-        "word" | "string" => {
-            let text = node_text(node, source);
-            if looks_like_path(&text) {
-                if let Some(path_type) = (lookups.resolve_path)(&text) {
-                    let style = match path_type {
-                        PathType::File => "path",
-                        PathType::Directory => "path.directory",
-                    };
-                    spans.push(Span {
-                        start: node_start_char(node, source),
-                        end: node_end_char(node, source),
-                        style: style.to_string(),
-                    });
-                }
-            }
-        }
-        _ => {}
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        walk_node(child, source, lookups, spans);
-    }
-}
-
-fn node_text(node: tree_sitter::Node, source: &str) -> String {
-    source[node.start_byte()..node.end_byte()].to_string()
-}
-
-fn node_start_char(node: tree_sitter::Node, source: &str) -> usize {
-    source[..node.start_byte()].chars().count()
-}
-
-fn node_end_char(node: tree_sitter::Node, source: &str) -> usize {
-    source[..node.end_byte()].chars().count()
-}
-
-fn looks_like_path(text: &str) -> bool {
-    if text.starts_with('/') || text.starts_with("./") || text.starts_with("../") {
-        return true;
-    }
-    if text.starts_with('~') {
-        return true;
-    }
-    if text.contains('/') {
-        return true;
-    }
-    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn parse_zsh(source: &str) -> tree_sitter::Tree {
-        let language: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&language).unwrap();
-        parser.parse(source, None).unwrap()
+    fn counting_cache() -> (PathCache, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let cache = PathCache::new(Box::new(move |_, _| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Some(PathType::File)
+        }));
+        (cache, calls)
     }
 
     #[test]
-    fn dynamic_existing_path() {
-        let source = "cat /etc/passwd";
-        let lookups = LookupEnv {
-            resolve_path: Box::new(|_| Some(PathType::File)),
-        };
-        let tree = parse_zsh(source);
-        let spans = dynamic_highlight_zsh(&tree, source, &lookups).unwrap();
-        assert!(
-            spans.iter().any(|s| s.style == "path"),
-            "expected path span for existing file"
-        );
+    fn lookup_is_memoized() {
+        let (mut cache, calls) = counting_cache();
+        for _ in 0..3 {
+            assert_eq!(cache.lookup("/etc/passwd", Some("/")), Some(PathType::File));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn lookup_checks_bare_words() {
+        let (mut cache, calls) = counting_cache();
+        assert_eq!(cache.lookup("Cargo.toml", Some("/")), Some(PathType::File));
+        assert_eq!(cache.lookup("", Some("/")), None);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn pwd_change_invalidates() {
+        let (mut cache, calls) = counting_cache();
+        cache.lookup("./x", Some("/a"));
+        cache.lookup("./x", Some("/b"));
+        cache.lookup("./x", Some("/b"));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn clear_invalidates() {
+        let (mut cache, calls) = counting_cache();
+        cache.lookup("./x", Some("/a"));
+        cache.clear();
+        cache.lookup("./x", Some("/a"));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     /// Regression test: bare relative paths (e.g. "foo/bar") must be resolved
-    /// against the provided pwd. If the `path.contains('/') && pwd.is_some()`
-    /// branch in `real_resolve_path` were removed, this test would fail.
+    /// against the provided pwd.
     #[test]
-    fn dynamic_existing_path_bare_relative() {
+    fn resolve_bare_relative_path() {
         let dir = tempfile::tempdir().unwrap();
         let subdir = dir.path().join("sub");
         std::fs::create_dir(&subdir).unwrap();
         std::fs::write(subdir.join("file.txt"), "hello").unwrap();
+        let pwd = Some(dir.path().to_str().unwrap());
 
-        let pwd = dir.path().to_str().unwrap().to_string();
-        let resolve_fn = real_resolve_path(Some(pwd));
-
-        // "sub/file.txt" is a bare relative path (no ./ prefix, no leading /)
-        let result = resolve_fn("sub/file.txt");
-        assert_eq!(result, Some(PathType::File), "bare relative path should resolve against pwd");
-
-        // "sub/" should resolve as a directory
-        let result = resolve_fn("sub/");
-        assert_eq!(result, Some(PathType::Directory), "bare relative dir path should resolve against pwd");
-
-        // A non-existent bare relative path should return None
-        let result = resolve_fn("sub/nope.txt");
-        assert_eq!(result, None, "non-existent bare relative path should return None");
+        assert_eq!(resolve_path("sub/file.txt", pwd), Some(PathType::File));
+        assert_eq!(resolve_path("sub/", pwd), Some(PathType::Directory));
+        assert_eq!(resolve_path("./sub", pwd), Some(PathType::Directory));
+        assert_eq!(resolve_path("sub/nope.txt", pwd), None);
+        assert_eq!(resolve_path("sub", pwd), Some(PathType::Directory));
+        assert_eq!(resolve_path("nope", pwd), None);
     }
 }

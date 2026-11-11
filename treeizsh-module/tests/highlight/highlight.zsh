@@ -89,3 +89,47 @@ echo hello
   print -l "${treeizsh_regions[@]}"
   typeset -g TREEIZSH_MODE='zsh'
 }
+
+test_unchanged_input_reuses_regions() {
+  treeizsh_highlight --reset
+  BUFFER='echo hi'
+  PREBUFFER=''
+  treeizsh_highlight
+  print "changed=$treeizsh_changed"; print -l "${treeizsh_regions[@]}"
+  treeizsh_highlight
+  print "changed=$treeizsh_changed"; print -l "${treeizsh_regions[@]}"
+  BUFFER='echo hi!'
+  treeizsh_highlight
+  print "changed=$treeizsh_changed"
+}
+
+test_prebuffer_split_is_part_of_input() {
+  # Same full source, different split: the regions must be recomputed.
+  treeizsh_highlight --reset
+  PREBUFFER=$'echo a\n'
+  BUFFER='ls'
+  treeizsh_highlight
+  print "changed=$treeizsh_changed"; print -l "${treeizsh_regions[@]}"
+  PREBUFFER=''
+  BUFFER=$'echo a\nls'
+  treeizsh_highlight
+  print "changed=$treeizsh_changed"; print -l "${treeizsh_regions[@]}"
+}
+
+test_reset_rechecks_commands() {
+  treeizsh_highlight --reset
+  PREBUFFER=''
+  BUFFER='defined_later_xyz'
+  treeizsh_highlight
+  print -l "${treeizsh_regions[@]}"
+  defined_later_xyz() { true; }
+  # Cached within the same command line...
+  BUFFER='defined_later_xyz '
+  treeizsh_highlight
+  print -l "${treeizsh_regions[@]}"
+  # ...and rechecked on the next one.
+  treeizsh_highlight --reset
+  treeizsh_highlight
+  print -l "${treeizsh_regions[@]}"
+  unfunction defined_later_xyz
+}

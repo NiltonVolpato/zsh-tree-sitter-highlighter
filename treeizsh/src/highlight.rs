@@ -1,8 +1,11 @@
+use std::collections::HashSet;
+
 use anyhow::{Context, Result};
 use tree_sitter::StreamingIterator;
 use tree_sitter_highlight::HighlightConfiguration;
 
-use crate::dynamic::{LookupEnv, dynamic_highlight_zsh};
+use crate::dynamic::PathCache;
+use crate::incremental::IncrementalParser;
 
 /// A highlighted span with character (not byte) offsets.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +25,25 @@ impl Span {
     }
 }
 
+/// A command name in the zsh source, with character offsets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Command {
+    pub start: usize,
+    pub end: usize,
+    pub name: String,
+}
+
+/// Everything one pass over a zsh buffer produces.
+#[derive(Debug, Default)]
+pub struct ZshAnalysis {
+    /// Static (query) and dynamic (path) spans, sorted by start, longest first.
+    pub spans: Vec<Span>,
+    /// Every `command_name` node, in source order.
+    pub commands: Vec<Command>,
+    /// Names of functions defined in the buffer itself.
+    pub local_functions: HashSet<String>,
+}
+
 /// Supported languages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LanguageConfig {
@@ -29,12 +51,49 @@ pub enum LanguageConfig {
     Markdown,
 }
 
-/// Holds the pre-configured highlight configurations for each language.
+/// Extra zsh patterns appended to the grammar's highlights query. Captures in the
+/// `treeizsh.` namespace are not styles: they feed command validation and path
+/// lookups, so the whole analysis is a single query pass over a single parse.
+const ZSH_EXTRA_QUERY: &str = "
+(variable_ref (simple_variable_name)) @variable
+(ERROR) @error
+(command_name) @treeizsh.command
+(function_definition name: _ @treeizsh.function_def)
+(word) @treeizsh.path
+(string) @treeizsh.path
+";
+
+/// What a zsh query capture is used for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ZshCapture {
+    Style,
+    Command,
+    FunctionDef,
+    PathCandidate,
+}
+
+impl ZshCapture {
+    fn from_name(name: &str) -> Self {
+        match name {
+            "treeizsh.command" => Self::Command,
+            "treeizsh.function_def" => Self::FunctionDef,
+            "treeizsh.path" => Self::PathCandidate,
+            _ => Self::Style,
+        }
+    }
+}
+
+/// Holds the pre-configured highlight configurations for each language, plus the
+/// per-buffer state (last parse tree, path lookups) reused across keystrokes.
 pub struct HighlightEngine {
     zsh_query: tree_sitter::Query,
+    /// Role of each `zsh_query` capture, by capture index.
+    zsh_captures: Vec<ZshCapture>,
+    zsh_parser: IncrementalParser,
     md_block_config: HighlightConfiguration,
     md_inline_config: HighlightConfiguration,
-    dynamic_env: Option<LookupEnv>,
+    /// `None` disables dynamic (filesystem) highlighting.
+    paths: Option<PathCache>,
 }
 
 impl HighlightEngine {
@@ -43,12 +102,14 @@ impl HighlightEngine {
         let md_lang: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
         let md_inline_lang: tree_sitter::Language = tree_sitter_md::INLINE_LANGUAGE.into();
 
-        let zsh_query_text = format!(
-            "{}\n(variable_ref (simple_variable_name)) @variable\n(ERROR) @error\n",
-            tree_sitter_zsh::HIGHLIGHT_QUERY
-        );
+        let zsh_query_text = format!("{}\n{}", tree_sitter_zsh::HIGHLIGHT_QUERY, ZSH_EXTRA_QUERY);
         let zsh_query = tree_sitter::Query::new(&zsh_lang, &zsh_query_text)
             .context("failed to create zsh highlight query")?;
+        let zsh_captures = zsh_query
+            .capture_names()
+            .iter()
+            .map(|name| ZshCapture::from_name(name))
+            .collect();
 
         let mut md_block_config = HighlightConfiguration::new(
             md_lang,
@@ -83,9 +144,11 @@ impl HighlightEngine {
 
         Ok(Self {
             zsh_query,
+            zsh_captures,
+            zsh_parser: IncrementalParser::new(&zsh_lang)?,
             md_block_config,
             md_inline_config,
-            dynamic_env: Some(LookupEnv::default()),
+            paths: Some(PathCache::default()),
         })
     }
 
@@ -93,151 +156,97 @@ impl HighlightEngine {
     #[cfg(test)]
     pub fn new_without_dynamic() -> Result<Self> {
         let mut engine = Self::new()?;
-        engine.dynamic_env = None;
+        engine.paths = None;
         Ok(engine)
     }
 
-    pub fn highlight(&self, lang: LanguageConfig, source: &str) -> Result<Vec<Span>> {
+    /// Create an engine whose path lookups go through `paths` (for tests).
+    #[cfg(test)]
+    pub fn with_path_cache(paths: PathCache) -> Result<Self> {
+        let mut engine = Self::new()?;
+        engine.paths = Some(paths);
+        Ok(engine)
+    }
+
+    /// Drop cached filesystem lookups (e.g. at the start of a new command line).
+    pub fn clear_caches(&mut self) {
+        if let Some(paths) = self.paths.as_mut() {
+            paths.clear();
+        }
+    }
+
+    pub fn highlight(&mut self, lang: LanguageConfig, source: &str) -> Result<Vec<Span>> {
         match lang {
-            LanguageConfig::Zsh => self.highlight_zsh(source),
+            LanguageConfig::Zsh => Ok(self.analyze_zsh(source, None)?.spans),
             LanguageConfig::Markdown => self.highlight_markdown(source),
         }
     }
 
-    /// Highlight with a specific working directory for dynamic path resolution.
-    pub fn highlight_with_pwd(
-        &self,
-        lang: LanguageConfig,
-        source: &str,
-        pwd: Option<&str>,
-    ) -> Result<Vec<Span>> {
-        if let Some(pwd) = pwd {
-            let env = LookupEnv::with_pwd(pwd);
-            match lang {
-                LanguageConfig::Zsh => {
-                    let (tree, static_spans) = self.highlight_zsh_static(source)?;
-                    let dynamic_spans = dynamic_highlight_zsh(&tree, source, &env)?;
-                    let mut all = dynamic_spans;
-                    all.extend(static_spans);
-                    all.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
-                    Ok(all)
-                }
-                LanguageConfig::Markdown => self.highlight_markdown(source),
-            }
-        } else {
-            self.highlight(lang, source)
-        }
-    }
-
-    fn highlight_zsh(&self, source: &str) -> Result<Vec<Span>> {
-        let (tree, static_spans) = self.highlight_zsh_static(source)?;
-
-        if let Some(ref env) = self.dynamic_env {
-            let dynamic_spans = dynamic_highlight_zsh(&tree, source, env)?;
-            let mut all = dynamic_spans;
-            all.extend(static_spans);
-            all.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
-            Ok(all)
-        } else {
-            Ok(static_spans)
-        }
-    }
-
-    /// Run static zsh highlighting (tree-sitter query captures), returning
-    /// the parsed tree and sorted/merged spans. Callers handle dynamic highlighting.
-    fn highlight_zsh_static(&self, source: &str) -> Result<(tree_sitter::Tree, Vec<Span>)> {
-        let language: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&language)?;
-        let tree = parser
-            .parse(source, None)
-            .context("zsh parsing failed")?;
+    /// Parse `source` (incrementally, against the previous call's tree) and run one
+    /// query pass collecting highlight spans, command names, local function
+    /// definitions and path highlights. Relative paths resolve against `pwd`.
+    pub fn analyze_zsh(&mut self, source: &str, pwd: Option<&str>) -> Result<ZshAnalysis> {
+        let tree = self.zsh_parser.parse(source)?;
 
         let byte_to_char = build_byte_to_char_table(source);
         let char_len = source.chars().count();
-        let text = source.as_bytes();
+        let char_range = |node: tree_sitter::Node| {
+            byte_to_char[node.start_byte()]..byte_to_char[node.end_byte()]
+        };
 
         let mut static_spans = Vec::new();
+        let mut dynamic_spans = Vec::new();
+        let mut analysis = ZshAnalysis::default();
+
+        let names = self.zsh_query.capture_names();
         let mut cursor = tree_sitter::QueryCursor::new();
-        let mut captures = cursor.captures(&self.zsh_query, tree.root_node(), text);
-        loop {
-            captures.advance();
-            if let Some((m, capture_idx)) = captures.get() {
-                let capture = m.captures[*capture_idx];
-                let capture_name = self.zsh_query.capture_names()[capture.index as usize];
-                if let Some(span) = self.capture_to_span(
-                    capture_name,
-                    capture.node,
-                    &byte_to_char,
-                    char_len,
-                ) {
-                    static_spans.push(span);
+        let mut captures = cursor.captures(&self.zsh_query, tree.root_node(), source.as_bytes());
+        while let Some((m, capture_idx)) = captures.next() {
+            let capture = m.captures[*capture_idx];
+            let index = capture.index as usize;
+            let node = capture.node;
+            let text = &source[node.start_byte()..node.end_byte()];
+            match self.zsh_captures[index] {
+                ZshCapture::Style => {
+                    if let Some(span) = capture_to_span(names[index], node, &byte_to_char, char_len)
+                    {
+                        static_spans.push(span);
+                    }
                 }
-            } else {
-                break;
+                ZshCapture::Command => {
+                    let range = char_range(node);
+                    analysis.commands.push(Command {
+                        start: range.start,
+                        end: range.end,
+                        name: text.to_string(),
+                    });
+                }
+                ZshCapture::FunctionDef => {
+                    analysis.local_functions.insert(text.to_string());
+                }
+                // Words in command position are validated as commands instead.
+                ZshCapture::PathCandidate if !is_command_name(node) => {
+                    if let Some(kind) = self.paths.as_mut().and_then(|p| p.lookup(text, pwd)) {
+                        dynamic_spans.push(Span::new(char_range(node), kind.style().to_string()));
+                    }
+                }
+                ZshCapture::PathCandidate => {}
             }
         }
+
         static_spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
-        let static_spans = merge_spans(static_spans);
-
-        Ok((tree, static_spans))
+        // Dynamic spans go first so that, among equal ranges, static styles win.
+        dynamic_spans.extend(merge_spans(static_spans));
+        dynamic_spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+        analysis.spans = dynamic_spans;
+        Ok(analysis)
     }
 
-    /// Extract command name positions from zsh source.
-    /// Returns (start_char, end_char, name) for each `command_name` node.
-    pub fn extract_zsh_commands(&self, source: &str) -> Result<Vec<(usize, usize, String)>> {
-        let language: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&language)?;
-        let tree = parser.parse(source, None).context("zsh parsing failed")?;
-        let mut commands = Vec::new();
-        Self::walk_commands(tree.root_node(), source, &mut commands);
-        Ok(commands)
-    }
-
-    fn walk_commands(
-        node: tree_sitter::Node,
-        source: &str,
-        commands: &mut Vec<(usize, usize, String)>,
-    ) {
-        if node.kind() == "command_name" {
-            let start = source[..node.start_byte()].chars().count();
-            let end = source[..node.end_byte()].chars().count();
-            let name = source[node.start_byte()..node.end_byte()].to_string();
-            commands.push((start, end, name));
-        }
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            Self::walk_commands(child, source, commands);
-        }
-    }
-
-    /// Extract function names defined in the zsh source buffer.
-    pub fn extract_zsh_function_definitions(&self, source: &str) -> Result<std::collections::HashSet<String>> {
-        let language: tree_sitter::Language = tree_sitter_zsh::LANGUAGE.into();
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&language)?;
-        let tree = parser.parse(source, None).context("zsh parsing failed")?;
-        let mut functions = std::collections::HashSet::new();
-        Self::walk_function_definitions(tree.root_node(), source, &mut functions);
-        Ok(functions)
-    }
-
-    fn walk_function_definitions(
-        node: tree_sitter::Node,
-        source: &str,
-        functions: &mut std::collections::HashSet<String>,
-    ) {
-        if node.kind() == "function_definition" {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let name = source[name_node.start_byte()..name_node.end_byte()].to_string();
-                functions.insert(name);
-            }
-        }
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            Self::walk_function_definitions(child, source, functions);
-        }
+    /// The style name of zsh capture `index`, or `None` for internal captures.
+    fn zsh_style_name(&self, index: u32) -> Option<&str> {
+        let index = index as usize;
+        (self.zsh_captures[index] == ZshCapture::Style)
+            .then(|| self.zsh_query.capture_names()[index])
     }
 
     fn highlight_markdown(&self, source: &str) -> Result<Vec<Span>> {
@@ -277,12 +286,8 @@ impl HighlightEngine {
                         continue;
                     }
                     let capture_name = self.md_block_config.names()[capture.index as usize];
-                    if let Some(span) = self.capture_to_span(
-                        capture_name,
-                        node,
-                        &byte_to_char,
-                        char_len,
-                    ) {
+                    if let Some(span) = capture_to_span(capture_name, node, &byte_to_char, char_len)
+                    {
                         spans.push(span);
                     }
                 } else {
@@ -308,12 +313,9 @@ impl HighlightEngine {
                     if let Some((m, capture_idx)) = captures.get() {
                         let capture = m.captures[*capture_idx];
                         let capture_name = self.md_inline_config.names()[capture.index as usize];
-                        if let Some(span) = self.capture_to_span(
-                            capture_name,
-                            capture.node,
-                            &byte_to_char,
-                            char_len,
-                        ) {
+                        if let Some(span) =
+                            capture_to_span(capture_name, capture.node, &byte_to_char, char_len)
+                        {
                             spans.push(span);
                         }
                     } else {
@@ -341,7 +343,8 @@ impl HighlightEngine {
                         for info_child in child.children(&mut info_cursor) {
                             if info_child.kind() == "language" {
                                 language = Some(
-                                    &source_to_parse[info_child.start_byte()..info_child.end_byte()],
+                                    &source_to_parse
+                                        [info_child.start_byte()..info_child.end_byte()],
                                 );
                             }
                         }
@@ -368,14 +371,19 @@ impl HighlightEngine {
                         let code_byte_to_char = build_byte_to_char_table(code);
                         let code_char_len = code.chars().count();
                         let mut qcursor = tree_sitter::QueryCursor::new();
-                        let mut captures =
-                            qcursor.captures(&self.zsh_query, zsh_tree.root_node(), code.as_bytes());
+                        let mut captures = qcursor.captures(
+                            &self.zsh_query,
+                            zsh_tree.root_node(),
+                            code.as_bytes(),
+                        );
                         loop {
                             captures.advance();
                             if let Some((m, capture_idx)) = captures.get() {
                                 let capture = m.captures[*capture_idx];
                                 let node = capture.node;
-                                let capture_name = self.zsh_query.capture_names()[capture.index as usize];
+                                let Some(capture_name) = self.zsh_style_name(capture.index) else {
+                                    continue;
+                                };
                                 let start = node.start_byte();
                                 let end = node.end_byte();
                                 let source_len = code_byte_to_char.len().saturating_sub(1);
@@ -411,34 +419,12 @@ impl HighlightEngine {
         Ok(merge_spans(spans))
     }
 
-    fn capture_to_span(
-        &self,
-        capture_name: &str,
-        node: tree_sitter::Node,
-        byte_to_char: &[usize],
-        char_len: usize,
-    ) -> Option<Span> {
-        // Skip meta captures used for injection/language detection.
-        if capture_name == "none" || capture_name == "injection.content" || capture_name == "injection.language" {
-            return None;
-        }
-        let source_len = byte_to_char.len().saturating_sub(1);
-        let start = node.start_byte().min(source_len);
-        let end = node.end_byte().min(source_len);
-        let char_start = byte_to_char[start].min(char_len);
-        let char_end = byte_to_char[end].min(char_len);
-        if char_start >= char_end {
-            return None;
-        }
-        Some(Span::new(char_start..char_end, capture_name.to_string()))
-    }
-
     /// Returns every capture name referenced by the loaded queries.
     #[cfg(test)]
     pub fn all_capture_names(&self) -> Vec<String> {
         let mut names = Vec::new();
-        for name in self.zsh_query.capture_names() {
-            if !names.contains(&name.to_string()) {
+        for (index, name) in self.zsh_query.capture_names().iter().enumerate() {
+            if self.zsh_captures[index] == ZshCapture::Style && !names.contains(&name.to_string()) {
                 names.push(name.to_string());
             }
         }
@@ -452,6 +438,35 @@ impl HighlightEngine {
         names.sort();
         names
     }
+}
+
+fn capture_to_span(
+    capture_name: &str,
+    node: tree_sitter::Node,
+    byte_to_char: &[usize],
+    char_len: usize,
+) -> Option<Span> {
+    // Skip meta captures used for injection/language detection.
+    if capture_name == "none"
+        || capture_name == "injection.content"
+        || capture_name == "injection.language"
+    {
+        return None;
+    }
+    let source_len = byte_to_char.len().saturating_sub(1);
+    let start = node.start_byte().min(source_len);
+    let end = node.end_byte().min(source_len);
+    let char_start = byte_to_char[start].min(char_len);
+    let char_end = byte_to_char[end].min(char_len);
+    if char_start >= char_end {
+        return None;
+    }
+    Some(Span::new(char_start..char_end, capture_name.to_string()))
+}
+
+/// Whether `node` is (part of) the command name of a simple command.
+fn is_command_name(node: tree_sitter::Node) -> bool {
+    node.parent().is_some_and(|p| p.kind() == "command_name")
 }
 
 /// Build a lookup table mapping byte offset -> character index.
@@ -545,7 +560,7 @@ mod tests {
     }
 
     fn assert_highlights(source: &str, lang: LanguageConfig, expected: &[(&str, &str)]) {
-        let e = engine();
+        let mut e = engine();
         let spans = e.highlight(lang, source).unwrap();
         let expected_string: Vec<(String, String)> = expected
             .iter()
@@ -569,7 +584,7 @@ mod tests {
 
     #[test]
     fn snapshot_zsh_combined_static_dynamic() {
-        let e = HighlightEngine::new().unwrap();
+        let mut e = HighlightEngine::new().unwrap();
         let spans = e.highlight(LanguageConfig::Zsh, "echo hello").unwrap();
         assert_that!(
             spans_to_segments(&spans, "echo hello"),
@@ -599,7 +614,11 @@ mod tests {
     fn snapshot_zsh_variable_in_quotes() {
         assert_zsh_highlights(
             r#"echo "foo $BAR""#,
-            &[("echo", "function"), ("\"foo $BAR\"", "string"), ("$BAR", "variable")],
+            &[
+                ("echo", "function"),
+                ("\"foo $BAR\"", "string"),
+                ("$BAR", "variable"),
+            ],
         );
     }
 
@@ -716,13 +735,15 @@ mod tests {
     }
     #[test]
     fn highlight_md_code_block_with_zsh_injection() {
-        let e = engine();
+        let mut e = engine();
         let source = "```zsh\necho hi\n```";
         let spans = e.highlight(LanguageConfig::Markdown, source).unwrap();
         // Should contain zsh-style highlighting inside the code block
         let segments = spans_to_segments(&spans, source);
         assert!(
-            segments.iter().any(|(text, style)| text == "echo" && style == "function"),
+            segments
+                .iter()
+                .any(|(text, style)| text == "echo" && style == "function"),
             "expected zsh-style span for 'echo', got: {:?}",
             segments
         );
@@ -738,5 +759,91 @@ mod tests {
             "empty capture names found: {:?}",
             names
         );
+        assert!(
+            names.iter().all(|n| !n.starts_with("treeizsh.")),
+            "internal captures leaked: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn analyze_zsh_collects_commands_and_local_functions() {
+        let mut e = engine();
+        let a = e.analyze_zsh("é() { ls; }; é | grep x", None).unwrap();
+        let commands: Vec<_> = a
+            .commands
+            .iter()
+            .map(|c| (c.start, c.end, c.name.as_str()))
+            .collect();
+        // Offsets are in chars: "é" is one char even though it is two bytes.
+        assert_eq!(
+            commands,
+            vec![(6, 8, "ls"), (13, 14, "é"), (17, 21, "grep")]
+        );
+        assert_eq!(a.local_functions, HashSet::from(["é".to_string()]));
+        assert!(a.spans.iter().all(|s| !s.style.starts_with("treeizsh.")));
+    }
+
+    #[test]
+    fn analyze_zsh_highlights_paths_and_memoizes_lookups() {
+        use crate::dynamic::PathType;
+        use std::sync::{Arc, Mutex};
+
+        let looked_up = Arc::new(Mutex::new(Vec::new()));
+        let log = looked_up.clone();
+        let paths = PathCache::new(Box::new(move |path, _| {
+            log.lock().unwrap().push(path.to_string());
+            match path {
+                "/etc" => Some(PathType::Directory),
+                "Cargo.toml" | "ls" => Some(PathType::File),
+                _ => None,
+            }
+        }));
+        let mut e = HighlightEngine::with_path_cache(paths).unwrap();
+
+        // Simulate typing; each prefix is a keystroke.
+        let line = "ls /etc Cargo.toml nope";
+        let mut last = Vec::new();
+        for end in 1..=line.len() {
+            last = e.analyze_zsh(&line[..end], Some("/")).unwrap().spans;
+        }
+        assert_eq!(
+            spans_to_segments(&last, line),
+            vec![
+                // A file named `ls` exists, but in command position it's a command.
+                ("ls".into(), "function".into()),
+                ("/etc".into(), "path.directory".into()),
+                ("Cargo.toml".into(), "path".into()),
+            ]
+        );
+        // Each distinct word is looked up once, not once per keystroke, and the
+        // command word never is.
+        let mut seen = looked_up.lock().unwrap().clone();
+        assert!(!seen.iter().any(|w| w == "l" || w == "ls"), "{seen:?}");
+        let total = seen.len();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), total, "repeated lookups");
+
+        e.clear_caches();
+        e.analyze_zsh(line, Some("/")).unwrap();
+        assert_eq!(looked_up.lock().unwrap().len(), total + 3);
+    }
+
+    #[test]
+    fn incremental_analysis_matches_fresh_engine() {
+        let target = "for f in ./src/*.rs; do echo \"$f é\" | sed 's/a/b/'; done # end";
+        let mut incremental = engine();
+        let mut typed = String::new();
+        for ch in target.chars() {
+            typed.push(ch);
+            let got = incremental.analyze_zsh(&typed, None).unwrap();
+            let want = engine().analyze_zsh(&typed, None).unwrap();
+            assert_eq!(got.spans, want.spans, "spans after typing {typed:?}");
+            assert_eq!(
+                got.commands, want.commands,
+                "commands after typing {typed:?}"
+            );
+        }
     }
 }
